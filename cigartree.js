@@ -96,4 +96,19 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
     return {alignment, nRows, nColumns, nodeList, nodeParentIndex, distanceToParent, nodeChildIndex, nodeById};
 };
 
+// Verify that there is a one-to-one mapping between leaf nodes and sequences in a separate sequence dataset.
+// Also check that no nodes specify their own sequences.
+const leavesMatchSequences = (expandedHistory, seqById) => {
+    if (expandedHistory.nodeList.some(node => 'seq' in node))
+        return false;
+    const leafNodes = expandedHistory.nodeList.filter(node => !node.child);
+    if (leafNodes.some(node => !('id' in node)))
+        return false;
+    const leafIds = new Set(leafNodes.map(node => node.id));
+    const seqIds = new Set(Object.keys(seqById));
+    const missingSeqs = Array.from(leafIds).filter(id => !seqIds.has(id));
+    const missingNodes = Array.from(seqIds).filter(id => !leafIds.has(id));
+    return missingSeqs.length === 0 && missingNodes.length === 0;
+}
+
 module.exports = {expandHistory};
