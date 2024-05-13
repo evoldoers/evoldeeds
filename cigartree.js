@@ -98,7 +98,7 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
 
 // Verify that there is a one-to-one mapping between leaf nodes and sequences in a separate sequence dataset.
 // Also check that no nodes specify their own sequences.
-const leavesMatchSequences = (expandedHistory, seqById) => {
+const doLeavesMatchSequences = (expandedHistory, seqById) => {
     if (expandedHistory.nodeList.some(node => 'seq' in node))
         return false;
     const leafNodes = expandedHistory.nodeList.filter(node => !node.child);
@@ -111,4 +111,4 @@ const leavesMatchSequences = (expandedHistory, seqById) => {
     return missingSeqs.length === 0 && missingNodes.length === 0;
 }
 
-module.exports = {expandHistory};
+module.exports = { expandHistory, doLeavesMatchSequences };
