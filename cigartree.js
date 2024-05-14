@@ -14,7 +14,7 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
     wildcard = wildcard || '*';
     // Build a list of nodes in preorder
     let nodeList = [], nodeParentIndex = [], nodeChildIndex = [], distanceToParent = [], nodeById = {};
-    const initialTraverse = (node, parentIndex) => {
+    const visitSubtree = (node, parentIndex) => {
         const nodeIndex = nodeList.length;
         node.n = nodeIndex;
         if ('id' in node) {
@@ -27,11 +27,10 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
         distanceToParent.push(node.distance || 0);
         nodeChildIndex.push([]);
         if (node.child)
-            nodeChildIndex[nodeIndex] = node.child.map((child) => initialTraverse(child,nodeIndex));
+            nodeChildIndex[nodeIndex] = node.child.map((child) => visitSubtree(child,nodeIndex));
         return nodeIndex;
     }
-    initialTraverse(rootNode);
-    console.warn(nodeChildIndex);
+    visitSubtree(rootNode,undefined);
     const nRows = nodeList.length;
     // Expand the cigar strings for each node
     const nodeName = (n) => nodeList[n].id || ('#' + n);
@@ -93,7 +92,7 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
     if (badSeqRow >= 0)
         throw new Error("Sequence not fully processed in node " + nodeName(badCigarRow) + " (position " + nextSeqPos[badSeqRow] + " of " + getSequence(nodeList[badSeqRow]) + ")");
     // return
-    return {alignment, nRows, nColumns, nodeList, nodeParentIndex, distanceToParent, nodeChildIndex, nodeById};
+    return {alignment, expandedCigar, nRows, nColumns, nodeList, nodeParentIndex, distanceToParent, nodeChildIndex, nodeById};
 };
 
 // Verify that there is a one-to-one mapping between leaf nodes and sequences in a separate sequence dataset.
@@ -111,4 +110,37 @@ const doLeavesMatchSequences = (expandedHistory, seqById) => {
     return missingSeqs.length === 0 && missingNodes.length === 0;
 }
 
-module.exports = { expandHistory, doLeavesMatchSequences };
+const countGapSizes = (expandedCigar) => {
+    const counts = expandedCigar.map ((excig) => {
+        let nInsertions = 0, nDeletions = 0, gapSizeCount = {}, transitionCount = [[0,0,0],[0,0,0],[0,0,0]];
+        const countGapSize = () => {
+            gapSize = nDeletions + ' ' + nInsertions;
+            if (gapSize in gapSizeCount)
+                gapSizeCount[gapSize]++;
+            else
+                gapSizeCount[gapSize] = 1;
+        };
+        const stateIndex = (c) => 'MDI'.indexOf(c);
+        let prev = stateIndex('M');
+        for (let pos = 0; pos < excig.length; pos++) {
+            const c = excig[pos];
+            if (c === 'I')
+                nInsertions++;
+            else if (c === 'D')
+                nDeletions++;
+            else {
+                countGapSize();
+                nInsertions = nDeletions = 0;
+            }
+            const state = stateIndex(c);
+            transitionCount[prev][state]++;
+            prev = state;
+        }
+        countGapSize();
+        transitionCount[prev][stateIndex('M')]++;
+        return { gapSizeCount, transitionCount };
+    });
+    return Object.fromEntries (['gapSizeCount','transitionCount'].map ((key,i) => [key,counts.map (count => count[key])]));
+};
+
+module.exports = { expandHistory, doLeavesMatchSequences, countGapSizes };
