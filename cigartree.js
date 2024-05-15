@@ -47,9 +47,10 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
     let nextCigarPos = expandedCigar.map(() => 0);
     let nextSeqPos = nodeList.map(node => 0);
     let alignment = nodeList.map(node => '');
+    let leavesByColumn = [], internalsByColumn = [], rootByColumn = [], branchesByColumn = [];
     let nColumns = 0;
     const getSequence = (node) => (seqById && 'id' in node) ? seqById[node.id] : node.seq;
-    const advanceCursor = (row, isDelete) => {
+    const advanceCursor = (row, leaves, internals, branches, isDelete) => {
         nextCigarPos[row]++;
         if (!isDelete) {
             const node = nodeList[row];
@@ -64,15 +65,22 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
                 nextSeqPos[row]++;                
             } else
                 alignment[row] += wildcard;
-            nodeChildIndex[row].forEach ((childRow) => {
-                    if (nextCigarPos[childRow] >= expandedCigar[childRow].length)
-                        throw new Error("CIGAR string ended prematurely in node " + nodeName(childRow));
-                    const childCigarChar = expandedCigar[childRow][nextCigarPos[childRow]];
-                    if (childCigarChar === 'I')
-                        throw new Error("Insertion in child node " + nodeName(childRow) + " when match or deletion expected");
-                    advanceCursor (childRow, childCigarChar === 'D');
-                });
+            if (nodeChildIndex[row].length === 0)
+                leaves.push(row);
+            else {
+                branches[row] = nodeChildIndex[row].filter ((childRow) => {
+                        if (nextCigarPos[childRow] >= expandedCigar[childRow].length)
+                            throw new Error("CIGAR string ended prematurely in node " + nodeName(childRow));
+                        const childCigarChar = expandedCigar[childRow][nextCigarPos[childRow]];
+                        if (childCigarChar === 'I')
+                            throw new Error("Insertion in child node " + nodeName(childRow) + " when match or deletion expected");
+                        const childIsDelete = childCigarChar === 'D';
+                        advanceCursor (childRow, leaves, internals, branches, childIsDelete);
+                        return !childIsDelete;
+                    });
+                internals.push(row);  // push at end so as to sort in postorder
             }
+        }
     };
     while (true) {
         let nextInsertRow = nextCigarPos.length - 1;
@@ -80,7 +88,12 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
             nextInsertRow--;
         if (nextInsertRow < 0)
             break;
-        advanceCursor(nextInsertRow,false);
+        let leaves = [], internals = [], branches = Array.from({length: nRows}, () => null);
+        advanceCursor(nextInsertRow,leaves,internals,branches,false);
+        rootByColumn.push(nextInsertRow);
+        internalsByColumn.push(internals);
+        leavesByColumn.push(leaves);
+        branchesByColumn.push(branches);
         ++nColumns;
         alignment = alignment.map ((row) => row.length < nColumns ? row + gap : row);
     }
@@ -92,7 +105,7 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
     if (badSeqRow >= 0)
         throw new Error("Sequence not fully processed in node " + nodeName(badCigarRow) + " (position " + nextSeqPos[badSeqRow] + " of " + getSequence(nodeList[badSeqRow]) + ")");
     // return
-    return {alignment, expandedCigar, nRows, nColumns, nodeList, nodeParentIndex, distanceToParent, nodeChildIndex, nodeById};
+    return {alignment, gap, wildcard, expandedCigar, nRows, nColumns, leavesByColumn, internalsByColumn, rootByColumn, nodeList, nodeParentIndex, distanceToParent, nodeChildIndex, nodeById};
 };
 
 // Verify that there is a one-to-one mapping between leaf nodes and sequences in a separate sequence dataset.
