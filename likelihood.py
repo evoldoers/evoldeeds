@@ -9,7 +9,7 @@ from jax.scipy.linalg import expm
 #  - parentIndex: (R,) integers, index of parent node. Nodes are sorted in preorder so parentIndex[i] <= i for all i. parentIndex[0] = -1
 #  - subRate: (*H,A,A) substitution rate matrix/matrices. Leading H axes (if any) are "hidden" substitution rate categories, A is alphabet size
 #  - rootFreq: (*H,A) root frequencies (typically equilibrium frequencies for substitution rate matrix)
-# To pad rows, set parentIndex[paddingRow:] = arange(paddingRow,R) and (for numerical stability) distanceToParent[paddingRow:] = 0
+# To pad rows, set parentIndex[paddingRow:] = arange(paddingRow,R)
 # To pad columns, set alignment[paddingRow,paddingCol:] = -1
 
 def pruneLogLike (alignment, distanceToParent, parentIndex, subRate, rootFreq):
