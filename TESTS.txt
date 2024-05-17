@@ -4,9 +4,11 @@ Both JavaScript and Python methods need to be able to
 - read FASTA into a seqByName dictionary
 - extract alphabet, wildcard, gapChar, subRate, rootProb, and indelParams from a Historian parameter JSON
 - tokenize FASTA into sequences using an alphabet
-- given an alignment (possibly missing internal rows), impute ancestral nodes with maximal gaps (i.e. wildcards up to MRCA of all ungapped positions)
 - given (alignment,gapChar,parentIndex), extract expanded cigar strings for each row
 - convert an expanded cigar string into a 3x3 matrix of (M,D,I) transition counts
+
+Extras:
+- given an alignment (possibly missing internal rows), impute ancestral nodes with maximal gaps (i.e. wildcards up to MRCA of all ungapped positions)
 - convert an expanded cigar string into a list of (nInsertions,nDeletions,count) tuples
 
 The CigarTree JSON format is meant for the web and is not really needed by Python.
@@ -19,6 +21,8 @@ LIKELIHOOD.
 Both JavaScript and Python need to be able to
 - calculate substitution likelihood
 - calculate gap likelihood based on (M,D,I) transition counts
+
+Extras:
 - calculate gap likelihood based on (nInsertions,nDeletions,count) tuples
 
 The Python code needs to be able to pad alignments and trees (and (nIns,nDel,count) tuple lists).
