@@ -2,6 +2,8 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import expm
 
+import newick
+
 # Compute substitution log-likelihood of a multiple sequence alignment and phylogenetic tree by pruning
 # Parameters:
 #  - alignment: (R,C) integer tokens. C is the length of the alignment (#cols), R is the number of sequences (#rows). A token of -1 indicates a gap.
@@ -43,3 +45,11 @@ def pruneLogLike (alignment, distanceToParent, parentIndex, subRate, rootFreq):
         logNorm = logNorm + jnp.log(maxLike)
     logNorm = logNorm + jnp.log(jnp.einsum('...ci,...i->...c', likelihood.at[:,0,:,:], rootFreq))  # (*H,C)
     return logNorm
+
+def parseTree (newickStr):
+    root = newick.loads(newickStr)[0]
+    nodes = [n for n in root.walk()]
+    parentIndex = jnp.array([nodes.index(n.parent) if n.parent is not None else -1 for n in nodes], dtype=jnp.int32)
+    distanceToParent = jnp.array([n.length for n in nodes], dtype=jnp.float32)
+    nodeName = [n.name for n in nodes]
+    return { parentIndex, distanceToParent, nodeName }
