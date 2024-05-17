@@ -35,11 +35,11 @@ const gapProb = (nDeletions, nInsertions, transmat) => {
 //  branchesByColumn: column-indexed array of node-indexed arrays of active (ungapped) child node indices
 //  alphabet: array of characters representing the alphabet
 //  subRate: substitution rate matrix
-//  rootFreq: root frequencies (typically equilibrium frequencies for substitution rate matrix)
-const subLogLike = (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, subRate, rootFreq) => {
+//  rootProb: root frequencies (typically equilibrium frequencies for substitution rate matrix)
+const subLogLike = (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, subRate, rootProb) => {
     const subRateMatrix = math.matrix(subRate);
     const branchLogProbMatrix = distanceToParent.map (d => math.map(math.expm(subRateMatrix.multiply(-d)), Math.log));
-    const rootLogProb = math.map (math.vector(rootFreq), Math.log);
+    const rootLogProb = math.map (math.vector(rootProb), Math.log);
     const nColumns = leavesByColumn.length;
     const nRows = alignment.length;
     const nTokens = alphabet.length;

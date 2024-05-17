@@ -1,0 +1,31 @@
+PARSING.
+Both JavaScript and Python methods need to be able to
+- read Newick into a (parentIndex,distanceToParent) structure
+- read FASTA into a seqByName dictionary
+- extract alphabet, wildcard, gapChar, subRate, rootProb, and indelParams from a Historian parameter JSON
+- tokenize FASTA into sequences using an alphabet
+- given an alignment (possibly missing internal rows), impute ancestral nodes with maximal gaps (i.e. wildcards up to MRCA of all ungapped positions)
+- given (alignment,gapChar,parentIndex), extract expanded cigar strings for each row
+- convert an expanded cigar string into a 3x3 matrix of (M,D,I) transition counts
+- convert an expanded cigar string into a list of (nInsertions,nDeletions,count) tuples
+
+The CigarTree JSON format is meant for the web and is not really needed by Python.
+So the JavaScript code should be able to convert parsed alignment+tree to CigarTree,
+but the Python only needs to keep it as an internal structure.
+However obviously the Python code needs to get most of the way there and it may be best to plan on CigarTree as our common target format,
+and it may be a useful way to write common tests.
+
+LIKELIHOOD.
+Both JavaScript and Python need to be able to
+- calculate substitution likelihood
+- calculate gap likelihood based on (M,D,I) transition counts
+- calculate gap likelihood based on (nInsertions,nDeletions,count) tuples
+
+The Python code needs to be able to pad alignments and trees (and (nIns,nDel,count) tuple lists).
+
+Higher-level tests:
+- read reference FASTA alignment and Newick tree
+- compute substitution and indel log-likelihoods
+- match Historian's log-likelihood for reference substitution params (LG08)
+- match manually calculated log-likelihood for indel params
+
