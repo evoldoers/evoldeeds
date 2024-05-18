@@ -33,16 +33,19 @@ def subLogLike (alignment, distanceToParent, parentIndex, subRate, rootProb):
     subMatrix = expm (jnp.einsum('...ij,r->...rij', subRate, distanceToParent))  # (*H,R,A,A)
     # Initialize pruning matrix
     tokenLookup = jnp.concatenate([jnp.ones(A)[None,:],jnp.eye(A)])
-    likelihood = jnp.repeat (jnp.expand_dims (tokenLookup[alignment + 1], jnp.arange(len(H))), repeats=H, axis=0)  # (*H,R,C,A)
+    likelihood = tokenLookup[alignment + 1]  # (R,C,A)
+    if len(H) > 0:
+        likelihood = jnp.expand_dims (likelihood, jnp.arange(len(H)))  # (*ones_like(H),R,C,A)
+        likelihood = jnp.repeat (likelihood, repeats=jnp.array(H), axis=jnp.arange(len(H)))  # (*H,R,C,A)
     logNorm = jnp.zeros(*H,C)  # (*H,C)
     # Compute log-likelihood for all columns in parallel by iterating over nodes in postorder
-    for child in range(A-1,0,-1):
+    for child in range(R-1,0,-1):
         parent = parentIndex[child]
         likelihood = likelihood.at[...,parent,:,:].multiply (jnp.einsum('...ij,...cj->...ci', subMatrix[...,child,:,:], likelihood[...,child,:,:]))
         maxLike = jnp.max(likelihood[...,parent,:,:], axis=-1)  # (*H,C)
         likelihood = likelihood.at[...,parent,:,:].divide (maxLike[...,None])
         logNorm = logNorm + jnp.log(maxLike)
-    logNorm = logNorm + jnp.log(jnp.einsum('...ci,...i->...c', likelihood.at[:,0,:,:], rootProb))  # (*H,C)
+    logNorm = logNorm + jnp.log(jnp.einsum('...ci,...i->...c', likelihood[...,0,:,:], rootProb))  # (*H,C)
     return logNorm
 
 def padDimension (unpaddedVal, multiplier):
@@ -68,13 +71,17 @@ def padAlignment (alignment, distanceToParent, parentIndex, nRows: int = None, n
         alignment = jnp.stack ([alignment, -1*jnp.ones((nRows, nCols - unpaddedCols))], axis=1)
     return alignment, distanceToParent, parentIndex
 
+def normalizeSubModel (subRate, rootProb):
+    subRate = subRate - jnp.diag(jnp.sum(subRate, axis=-1))
+    rootProb = rootProb / jnp.sum(rootProb)
+    return subRate, rootProb
+
 def parseHistorianParams (params):
     alphabet = params['alphabet']
     def parseSubRate (p):
-        subRate = jnp.array([[p['subRate'].get(i,{}).get(j,0) for j in alphabet] for i in alphabet], dtype=jnp.float32)
-        subRate = subRate - jnp.diag(jnp.sum(subRate, axis=-1))
-        rootProb = jnp.array([p['rootProb'].get(i,0) for i in alphabet], dtype=jnp.float32)
-        rootProb = rootProb / jnp.sum(rootProb)
+        subRate = jnp.array([[p['subrate'].get(i,{}).get(j,0) for j in alphabet] for i in alphabet], dtype=jnp.float32)
+        rootProb = jnp.array([p['rootprob'].get(i,0) for i in alphabet], dtype=jnp.float32)
+        subRate, rootProb = normalizeSubModel (subRate, rootProb)
         return subRate, rootProb
     if 'mixture' in params:
         mixture = [parseSubRate(p) for p in params['mixture']]
