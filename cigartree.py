@@ -93,12 +93,12 @@ def countGapSizes (expandedCigars):
     def countCigar (excig):
         nInsertions = 0
         nDeletions = 0
-        gapSizeCount = {}
-        transitionCount = np.zeros((3,3))
+        gapSizeCounts = {}
+        transCounts = np.zeros((3,3))
         def countGapSize():
-            nonlocal gapSizeCount, nDeletions, nInsertions
+            nonlocal gapSizeCounts, nDeletions, nInsertions
             gapSize = "%s %s" % (nDeletions, nInsertions)
-            gapSizeCount[gapSize] = gapSizeCount.get(gapSize,0) + 1
+            gapSizeCounts[gapSize] = gapSizeCounts.get(gapSize,0) + 1
         stateIndex = lambda c: 'MID'.index(c)
         prev = stateIndex('M')
         for c in excig:
@@ -110,13 +110,13 @@ def countGapSizes (expandedCigars):
                 countGapSize()
                 nInsertions = nDeletions = 0
             state = stateIndex(c)
-            transitionCount[prev][state] = transitionCount[prev][state] + 1
+            transCounts[prev][state] = transCounts[prev][state] + 1
             prev = state
         countGapSize()
-        transitionCount[prev][stateIndex('M')] = transitionCount[prev][stateIndex('M')] + 1
-        return gapSizeCount, transitionCount
+        transCounts[prev][stateIndex('M')] = transCounts[prev][stateIndex('M')] + 1
+        return gapSizeCounts, transCounts
     counts = [countCigar(x) for x in expandedCigars]
-    return tuple([c[i] for c in counts] for i in range(2))  # gapSizeCount, transitionCount
+    return tuple([c[i] for c in counts] for i in range(2))  # gapSizeCounts, transCounts
 
 def compressCigarString (stateStr):
     s = None
@@ -163,7 +163,7 @@ def getHMMSummaries (newickStr, fastaStr, alphabet, gapChar = '-'):
     seqs = addPathsToMRCAs (seqs, parentIndex)
     seqs = [s.lower() for s in seqs]
     expandedCigars = getExpandedCigarsFromAlignment (seqs, parentIndex)
-    _gapSizes, transCounts = countGapSizes(expandedCigars)
+    _gapSizeCounts, transCounts = countGapSizes(expandedCigars)
     transCounts = jnp.stack (transCounts, axis=0)
     seqs = tokenizeAlignment (seqs, alphabet)
     return seqs, distanceToParent, parentIndex, transCounts

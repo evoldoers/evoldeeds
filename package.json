@@ -3,12 +3,14 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "mathjs": "^12.4.2"
+    "mathjs": "^12.4.2",
+    "newick-js": "^1.2.1"
   }
 }

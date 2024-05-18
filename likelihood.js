@@ -1,11 +1,11 @@
-import math from 'mathjs';
+import * as math from 'mathjs';
 
 // Binomial coefficient using gamma functions
 const log_binom = (x, y) => lgamma(x+1) - lgamma(y+1) - lgamma(x-y+1);
 
-const sum = (arr) => arr.reduce((a,b) => a+b, 0);
+export const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 
-const logsumexp = (arr) => arr.reduce((a,b) => Math.min(a,b) + Math.log(1 + Math.exp(Math.abs(a-b))));
+export const logsumexp = (arr) => arr.filter((x)=>x>-Infinity).reduce((a,b) => Math.max(a,b) + Math.log(1 + Math.exp(-Math.abs(a-b))),-Infinity);
 
 // Returns the (log of the) probability of seeing a particular size of gap
 const gapProb = (nDeletions, nInsertions, transmat) => {
@@ -36,10 +36,11 @@ const gapProb = (nDeletions, nInsertions, transmat) => {
 //  alphabet: array of characters representing the alphabet
 //  subRate: substitution rate matrix
 //  rootProb: root frequencies (typically equilibrium frequencies for substitution rate matrix)
-const subLogLike = (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, subRate, rootProb) => {
+export const subLogLike = (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, subRate, rootProb) => {
     const subRateMatrix = math.matrix(subRate);
-    const branchLogProbMatrix = distanceToParent.map (d => math.map(math.expm(subRateMatrix.multiply(-d)), Math.log));
-    const rootLogProb = math.map (math.vector(rootProb), Math.log);
+    const branchProbMatrix = distanceToParent.map (d => math.expm(math.multiply(subRateMatrix,d)));
+    const branchLogProbMatrix = branchProbMatrix.map ((m) => math.map (m, (x) => Math.log(Math.max(Number.MIN_VALUE,x))));
+    const rootLogProb = math.map (math.matrix(rootProb), Math.log);
     const nColumns = leavesByColumn.length;
     const nRows = alignment.length;
     const nTokens = alphabet.length;
@@ -47,22 +48,54 @@ const subLogLike = (alignment, distanceToParent, leavesByColumn, internalsByColu
     let logF = Array.from({length:nRows}, () => Array.from({length:nTokens}, () => -Infinity));
     const colLogProb = Array.from({length:nColumns}, (_,col) => {
         const internals = internalsByColumn[col];
-        if (internals.length == 0)
-            return 0;
-        const root = internals[0];
-        const branches = branchesByColumn[col];
         const leaves = leavesByColumn[col];
+        const branches = branchesByColumn[col];
+        const root = internals.length > 0 ? internals[0] : leaves[0];
         leaves.forEach((leaf) => {
             const char = alignment[leaf][col];
+            if (char === '-') throw new Error ("unexpected gap at row " + leaf + " col " + col + ': ' + alignment)
             const token = alphabet.indexOf(char);
-            tokenIndices.forEach((i) => { logF[leaf][col][i] = i === token ? 0 : -Infinity; });
+            tokenIndices.forEach((i) => { logF[leaf][i] = i === token ? 0 : -Infinity; });
+            console.warn('col ' + col + ' leaf ' + leaf + ' char ' + char + ' logF ' + logF[leaf])
         });
         internals.forEach((node) => {
+            branches[node].forEach((child) => {
+                console.warn('col ' + col + ' child ' + child + ' mx ' + branchLogProbMatrix[child] + ' logF ' + logF[child])
+            });
             tokenIndices.forEach((i) => {
-                logF[node][i] = sum (branches[node].map((child) => logsumexp (tokenIndices.map((j) => branchLogProbMatrix[child][i][j] + logF[child][j]))));
+                logF[node][i] = sum (branches[node].map((child) => logsumexp (tokenIndices.map((j) => branchLogProbMatrix[child].get([i,j]) + logF[child][j]))));
             });
         });
-        return logsumexp (tokenIndices.map((i) => rootLogProb[i] + logF[root][i]));
+        console.warn('col ' + col + ' after',{logF})
+        const clp_lse = tokenIndices.map((i) => rootLogProb.get([i]) + logF[root][i]);
+        const clp = logsumexp (clp_lse);
+        console.warn('col ' + col,{clp_lse,clp})
+        return clp;
     });
-    return sum(colLogProb);
+    return colLogProb;
 };
+
+const normalizeSubModel = (subRate, rootProb) => {
+    const A = rootProb.length;
+    const norm = sum(rootProb);
+    for (let i = 0; i < A; ++i) {
+        subRate[i][i] -= sum(subRate[i]);
+        rootProb[i] /= norm;
+    }
+    return { subRate, rootProb };
+};
+
+export const parseHistorianParams = (params) => {
+    const alphabet = params['alphabet'];
+    const alphArray = alphabet.split('');
+    const parseSubRate = (p) => {
+        let sr = alphArray.map ((i) => alphArray.map ((j) => (p['subrate'][i] || {})[j] || 0));
+        let rp = alphArray.map ((i) => p['rootprob'][i] || 0);
+        const { subRate, rootProb } = normalizeSubModel (sr, rp);
+        return { subRate, rootProb };
+    };
+    const mixture = 'mixture' in params ? params['mixture'].map(parseSubRate): [parseSubRate(params)];
+    const indelParams = ['insrate','delrate','insextprob','delextprob'].map ((key) => params[key] || 0);
+    return { alphabet, mixture, indelParams };
+};
+

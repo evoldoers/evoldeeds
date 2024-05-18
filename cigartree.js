@@ -1,22 +1,23 @@
-// A history tree is a recursive structure of nodes. It may contain the following fields:
+import assert from 'node:assert/strict';
+import { parse } from 'newick-js';
+
+const sum = (arr) => arr.reduce((a,b) => a+b, 0);
+
+// A cigar tree is a recursive structure of nodes. It may contain the following fields:
 //  - distance: the distance from this node to its parent (not present for the root node)
 //  - cigar: the CIGAR string for the alignment from the parent to this node (root node must contain all inserts)
 //  - child: an array of child nodes (not present for leaf nodes)
 //  - seq: the sequence at this node (may be omitted under some circumstances)
 //  - id: a unique identifier for this node (may be omitted unless needed)
-//  - n: the preorder index of this node (may be omitted, will be calculated as needed)
 
 // Expand a history tree to a multiple alignment and a tree
 const cigarRegex = /^(\d+[MID])*$/;
 const cigarGroupRegex = /(\d+)([MID])/g;
-const expandHistory = (rootNode, seqById, gap, wildcard) => {
-    gap = gap || '-';
-    wildcard = wildcard || '*';
+export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') => {
     // Build a list of nodes in preorder
     let nodeList = [], nodeParentIndex = [], nodeChildIndex = [], distanceToParent = [], nodeById = {};
     const visitSubtree = (node, parentIndex) => {
         const nodeIndex = nodeList.length;
-        node.n = nodeIndex;
         if ('id' in node) {
             if (node.id in nodeById)
                 throw new Error("Duplicate node ID: " + node.id);
@@ -96,7 +97,11 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
         branchesByColumn.push(branches);
         ++nColumns;
         alignment = alignment.map ((row) => row.length < nColumns ? row + gap : row);
+        assert (alignment.filter((row)=>row.length!==nColumns).length === 0)
+        assert (leaves.filter((r)=>alignment[r][-1]===gap).length === 0)
     }
+    console.warn({alignment,leavesByColumn})
+    assert (leavesByColumn.filter((leaves,col)=>leaves.filter((leaf)=>alignment[leaf][col]==='-').length).length===0)
     // verify that all cursors reached the end of the respective expanded CIGAR strings (and sequences, if supplied)
     const badCigarRow = nextCigarPos.findIndex ((pos,row) => pos < expandedCigar[row].length);
     if (badCigarRow >= 0)
@@ -105,12 +110,12 @@ const expandHistory = (rootNode, seqById, gap, wildcard) => {
     if (badSeqRow >= 0)
         throw new Error("Sequence not fully processed in node " + nodeName(badCigarRow) + " (position " + nextSeqPos[badSeqRow] + " of " + getSequence(nodeList[badSeqRow]) + ")");
     // return
-    return {alignment, gap, wildcard, expandedCigar, nRows, nColumns, leavesByColumn, internalsByColumn, rootByColumn, nodeList, nodeParentIndex, distanceToParent, nodeChildIndex, nodeById};
+    return {alignment, gap, wildcard, expandedCigar, nRows, nColumns, leavesByColumn, internalsByColumn, branchesByColumn, rootByColumn, nodeList, nodeParentIndex, distanceToParent, nodeChildIndex, nodeById};
 };
 
 // Verify that there is a one-to-one mapping between leaf nodes and sequences in a separate sequence dataset.
 // Also check that no nodes specify their own sequences.
-const doLeavesMatchSequences = (expandedHistory, seqById) => {
+export const doLeavesMatchSequences = (expandedHistory, seqById) => {
     if (expandedHistory.nodeList.some(node => 'seq' in node))
         return false;
     const leafNodes = expandedHistory.nodeList.filter(node => !node.child);
@@ -123,15 +128,15 @@ const doLeavesMatchSequences = (expandedHistory, seqById) => {
     return missingSeqs.length === 0 && missingNodes.length === 0;
 }
 
-const countGapSizes = (expandedCigar) => {
+export const countGapSizes = (expandedCigar) => {
     const counts = expandedCigar.map ((excig) => {
-        let nInsertions = 0, nDeletions = 0, gapSizeCount = {}, transitionCount = [[0,0,0],[0,0,0],[0,0,0]];
+        let nInsertions = 0, nDeletions = 0, gapSizeCounts = {}, transCounts = [[0,0,0],[0,0,0],[0,0,0]];
         const countGapSize = () => {
-            gapSize = nDeletions + ' ' + nInsertions;
-            if (gapSize in gapSizeCount)
-                gapSizeCount[gapSize]++;
+            const gapSize = nDeletions + ' ' + nInsertions;
+            if (gapSize in gapSizeCounts)
+                gapSizeCounts[gapSize]++;
             else
-                gapSizeCount[gapSize] = 1;
+                gapSizeCounts[gapSize] = 1;
         };
         const stateIndex = (c) => 'MID'.indexOf(c);
         let prev = stateIndex('M');
@@ -146,14 +151,178 @@ const countGapSizes = (expandedCigar) => {
                 nInsertions = nDeletions = 0;
             }
             const state = stateIndex(c);
-            transitionCount[prev][state]++;
+            transCounts[prev][state]++;
             prev = state;
         }
         countGapSize();
-        transitionCount[prev][stateIndex('M')]++;
-        return { gapSizeCount, transitionCount };
+        transCounts[prev][stateIndex('M')]++;
+        return { gapSizeCounts, transCounts };
     });
-    return Object.fromEntries (['gapSizeCount','transitionCount'].map ((key,i) => [key,counts.map (count => count[key])]));
+    return Object.fromEntries (['gapSizeCounts','transCounts'].map ((key,i) => [key,counts.map (count => count[key])]));
 };
 
-module.exports = { expandHistory, doLeavesMatchSequences, countGapSizes };
+const parseNewick = (newickStr) => {
+    const { graph, root } = parse(newickStr);
+    const unsortedNodes = Array.from (graph[0]), edges = Array.from (graph[1]);
+    let nodes = [];
+    const traverse = (node) => {
+        nodes.push (node);
+        edges.filter ((e) => e[0] === node).map ((e) => traverse(e[1]));
+    };
+    traverse (root);  // get nodes in preorder
+    let parentIndex = nodes.map (() => -1);
+    let distanceToParent = nodes.map (() => 0);
+    edges.forEach ((e) => {
+        const p = nodes.indexOf(e[0]), c = nodes.indexOf(e[1]), d = e[2];
+        parentIndex[c] = p;
+        distanceToParent[c] = d;
+    });
+    assert (parentIndex.slice(1).filter((p) => p < 0).length === 0);
+    const nodeName = nodes.map ((n) => 'label' in n ? n.label : undefined);
+    return { parentIndex, distanceToParent, nodeName };
+};
+
+const parseFasta = (fastaStr, requireFlush = true) => {
+    const lines = fastaStr.split('\n');
+    let seqByName = {}, seqNames = [], name;
+    lines.forEach ((line) => {
+        if (line[0] === '>') {
+            name = line.substr(1).split(' ')[0];
+            seqNames.push(name);
+            seqByName[name] = '';
+        } else
+            seqByName[name] += line;
+    });
+    if (requireFlush) {
+        const seqLengths = Object.values(seqByName).map((s) => s.length);
+        assertSame (seqLengths, "Sequences are supposed to be the same length, but are not");
+    }
+    return { seqNames, seqByName };
+};
+
+const assertSame = (l, error) => {
+    if (l.length > 0)
+        assert (l.filter((n) => n != l[0]).length === 0, error);
+};
+
+const getNumCols = (seqs) => {
+    const seqLengths = seqs.filter((s) => typeof(s) !== 'undefined').map((s) => s.length);
+    assertSame (seqLengths, "Alignment rows are supposed to be the same length, but are not");
+    assert (seqLengths.length > 0, "Must have at least one sequence in alignment");
+    return seqLengths[0];
+};
+
+const orderAlignmentSeqs = (seqByName, nodeName, gapChar = '-') => {
+    let seqs = nodeName.map((n) => (n && seqByName[n]) || undefined);
+    const nCols = getNumCols(seqs);
+    const gapRow = gapChar.repeat(nCols);
+    seqs = seqs.map ((s) => s || gapRow);
+    return seqs;
+};
+
+const getChildren = (parentIndex) => {
+    const nRows = parentIndex.length;
+    let children = Array.from({length:nRows}).map(() => []);
+    parentIndex.forEach ((p,c) => {
+        if (p >= 0)
+            children[p].push(c);
+    })
+    return children;
+};
+
+const addPathsToMRCAs = (seqs, parentIndex, gapChar = '-', wildChar = 'x') => {
+    const nRows = seqs.length;
+    const nCols = getNumCols(seqs);
+    const children = getChildren(parentIndex);
+    seqs = seqs.map ((s) => s.split(''));
+    for (let col = 0; col < nCols; ++col) {
+        let nUngappedDescendants = new Array(nRows).fill(0);
+        for (let row = nRows-1; row >= 0; --row) {
+            const isLeaf = children[row].length === 0;
+            if (isLeaf && seqs[row][col] != gapChar)
+                nUngappedDescendants[row] = 1;
+            else
+                nUngappedDescendants[row] = sum(children[row].map((c) => nUngappedDescendants[c]));
+        }
+        for (let row = 0; row < nRows; ++row) {
+            const isInternal = children[row].length;
+            if (isInternal && seqs[row][col] === gapChar && children[row].filter((c) => nUngappedDescendants[c] > 0).length > 1)
+                seqs[row][col] = wildChar;
+        }
+    }
+    seqs = seqs.map ((s) => s.join(''));
+    return seqs;
+};
+
+const getExpandedCigarsFromAlignment = (seqs, parentIndex, gapChar = '-') => {
+    assert (seqs.length > 0, "Alignment is empty");
+    const nRows = seqs.length;
+    const nCols = seqs[0].length;
+    const getCigarChar = (parentChar, childChar) => {
+        if (parentChar === gapChar) {
+            if (childChar === gapChar)
+                return undefined;
+            return 'I';
+        } else {
+            if (childChar == gapChar)
+                return 'D'
+            return 'M'
+        }
+    };
+    const getExpandedCigarString = (parentRow, childRow) => {
+        return Array.from({length:nCols},(_,n)=>getCigarChar(parentRow[n],childRow[n])).filter((c)=>c).join('');
+    };
+    return Array.from({length:nRows},(_,r)=> getExpandedCigarString (r > 0 ? seqs[parentIndex[r]] : gapChar.repeat(nCols),seqs[r]));
+};
+
+const compressCigarString = (stateStr) => {
+    let s, n = 0, cigar = [];
+    stateStr.split('').forEach ((c) => {
+        if (s != c) {
+            if (s)
+                cigar.push (String(n) + s);
+            s = c;
+            n = 0;
+        }
+        n = n + 1;
+    });
+    if (s)
+        cigar.push (String(n) + s);
+    return cigar.join('');
+};
+
+export const makeCigarTree = (newickStr, fastaStr, gapChar = '-') => {
+    const { parentIndex, distanceToParent, nodeName } = parseNewick (newickStr);
+    const { seqByName } = parseFasta (fastaStr);
+    let seqs = orderAlignmentSeqs (seqByName, nodeName);
+    seqs = addPathsToMRCAs (seqs, parentIndex, gapChar);
+    const expandedCigars = getExpandedCigarsFromAlignment (seqs, parentIndex, gapChar);
+    const cigars = expandedCigars.map (compressCigarString);
+    const children = getChildren (parentIndex);
+    const makeNode = (n) => {
+        let node = {};
+        const id = nodeName[n];
+        if (id)
+            node['id'] = id;
+        if (n > 0)
+            node['distance'] = distanceToParent[n];
+        node['cigar'] = cigars[n];
+        if (id && id in seqByName)
+            node['seq'] = seqByName[id].replaceAll(gapChar,'');
+        if (children[n].length > 0)
+            node['child'] = children[n].map(makeNode);
+        return node;
+    };
+    return makeNode(0);
+};
+
+export const getHMMSummaries = (newickStr, fastaStr, gapChar = '-') => {
+    const { parentIndex, distanceToParent, nodeName } = parseNewick (newickStr);
+    const { seqByName } = parseFasta (fastaStr);
+    let seqs = orderAlignmentSeqs (seqByName, nodeName);
+    seqs = addPathsToMRCAs (seqs, parentIndex);
+    seqs = seqs.map ((s) => s.toLowerCase());
+    const expandedCigars = getExpandedCigarsFromAlignment (seqs, parentIndex);
+    const { transCounts } = countGapSizes(expandedCigars);
+    return { seqs, distanceToParent, parentIndex, transCounts };
+};

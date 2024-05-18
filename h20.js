@@ -61,12 +61,16 @@ const largeTimeTransitionMatrix = (t, indelParams) => {
 };
 
 // get transition matrix for any given time
-const transitionMatrix = (t, indelParams, alphabetSize) => {
+export const transitionMatrix = (t, indelParams, alphabetSize) => {
     const [lam,mu,x,y] = indelParams;
     return t > 0. ? (alignmentIsProbablyUndetectable(t,indelParams,alphabetSize || 20)
                                  ? largeTimeTransitionMatrix(t,indelParams)
                                  : smallTimeTransitionMatrix(t,indelParams))
                     : zeroTimeTransitionMatrix(indelParams);
+};
+
+export const dummyRootTransitionMatrix = () => {
+  return [[0,1,0],[1,1,0],[1,0,0]];
 };
 
 // Runge-Kutta integration
@@ -81,7 +85,7 @@ const integrateCounts = (t, params, steps, dt0) => {
   const RK4body = (T, dt, n) => {
     const t = ts_with_0[n];
     const compute_derivs = (k, f) => {
-        Tnew = T.slice(0);
+        let Tnew = T.slice(0);
         for (let i = 0; i < T.length; i++)
             Tnew[i] += dt * k[i] * f;
         return derivs(t+dt*f, Tnew, params);
@@ -96,5 +100,3 @@ const integrateCounts = (t, params, steps, dt0) => {
   };
   return dts.reduce (RK4body, T0);
 };
-
-module.exports = { transitionMatrix };
