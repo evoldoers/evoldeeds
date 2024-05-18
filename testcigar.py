@@ -24,17 +24,12 @@ ct = cigartree.makeCigarTree (treeStr, alignStr)
 alphabet, mixture, indelParams = likelihood.parseHistorianParams (modelJson)
 seqs, distanceToParent, parentIndex, transCounts = cigartree.getHMMSummaries (treeStr, alignStr, alphabet)
 
-#print(transCounts)
-
 subll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, *mixture[0])
 subll_total = float (jnp.sum (subll))
 
 transMat = jnp.stack ([h20.dummyRootTransitionMatrix()] + [h20.transitionMatrix(t,indelParams,alphabetSize=len(alphabet)) for t in distanceToParent[1:]], axis=0)
 transMat = jnp.log (jnp.maximum (transMat, h20.smallest_float32))
 transll = transCounts * transMat
-#print(transMat)
-#print(transCounts)
-#print(transll)
 transll_total = float (jnp.sum (transll))
 
 print (json.dumps({'loglike':{'subs':subll_total,'indels':transll_total}, 'cigartree': ct}))
