@@ -2,10 +2,6 @@
 const lm = (t, rate, prob) => Math.exp (-rate * t / (1 - prob));
 const indels = (t, rate, prob) => 1 / lm(t,rate,prob) - 1;
 
-const deletions = (t, args) => {
-  return indels(t,args.mu,args.y);
-}
-
 // calculate derivatives of (a,b,u,q)
 const derivs = (t, counts, params) => {
   const [lam,mu,x,y] = params;

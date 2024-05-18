@@ -7,8 +7,8 @@
 //  - n: the preorder index of this node (may be omitted, will be calculated as needed)
 
 // Expand a history tree to a multiple alignment and a tree
-const cigarRegex = /^(\d+[MDI])*$/;
-const cigarGroupRegex = /(\d+)([MDI])/g;
+const cigarRegex = /^(\d+[MID])*$/;
+const cigarGroupRegex = /(\d+)([MID])/g;
 const expandHistory = (rootNode, seqById, gap, wildcard) => {
     gap = gap || '-';
     wildcard = wildcard || '*';
@@ -133,7 +133,7 @@ const countGapSizes = (expandedCigar) => {
             else
                 gapSizeCount[gapSize] = 1;
         };
-        const stateIndex = (c) => 'MDI'.indexOf(c);
+        const stateIndex = (c) => 'MID'.indexOf(c);
         let prev = stateIndex('M');
         for (let pos = 0; pos < excig.length; pos++) {
             const c = excig[pos];

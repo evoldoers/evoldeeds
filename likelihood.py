@@ -87,5 +87,5 @@ def parseHistorianParams (params):
         mixture = [parseSubRate(p) for p in params['mixture']]
     else:
         mixture = [parseSubRate(params)]
-    indelParams = (params.get(name,0) for name in ['insrate','delrate','insextprob','delextprob'])
+    indelParams = tuple(params.get(name,0) for name in ['insrate','delrate','insextprob','delextprob'])
     return alphabet, mixture, indelParams

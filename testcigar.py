@@ -5,6 +5,7 @@ import jax.numpy as jnp
 
 import cigartree
 import likelihood
+import h20
 
 if len(sys.argv) != 4:
     print('Usage: {} tree.nh align.fa model.json'.format(sys.argv[0]))
@@ -28,4 +29,12 @@ seqs, distanceToParent, parentIndex, transCounts = cigartree.getHMMSummaries (tr
 subll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, *mixture[0])
 subll_total = float (jnp.sum (subll))
 
-print (json.dumps({'loglike':{'subs':subll_total}, 'cigartree': ct}))
+transMat = jnp.stack ([h20.dummyRootTransitionMatrix()] + [h20.transitionMatrix(t,indelParams,alphabetSize=len(alphabet)) for t in distanceToParent[1:]], axis=0)
+transMat = jnp.log (jnp.maximum (transMat, h20.smallest_float32))
+transll = transCounts * transMat
+#print(transMat)
+#print(transCounts)
+#print(transll)
+transll_total = float (jnp.sum (transll))
+
+print (json.dumps({'loglike':{'subs':subll_total,'indels':transll_total}, 'cigartree': ct}))

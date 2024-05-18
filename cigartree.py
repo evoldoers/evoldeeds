@@ -99,7 +99,7 @@ def countGapSizes (expandedCigars):
             nonlocal gapSizeCount, nDeletions, nInsertions
             gapSize = "%s %s" % (nDeletions, nInsertions)
             gapSizeCount[gapSize] = gapSizeCount.get(gapSize,0) + 1
-        stateIndex = lambda c: 'MDI'.index(c)
+        stateIndex = lambda c: 'MID'.index(c)
         prev = stateIndex('M')
         for c in excig:
             if c == 'I':
@@ -164,6 +164,7 @@ def getHMMSummaries (newickStr, fastaStr, alphabet, gapChar = '-'):
     seqs = [s.lower() for s in seqs]
     expandedCigars = getExpandedCigarsFromAlignment (seqs, parentIndex)
     _gapSizes, transCounts = countGapSizes(expandedCigars)
+    transCounts = jnp.stack (transCounts, axis=0)
     seqs = tokenizeAlignment (seqs, alphabet)
     return seqs, distanceToParent, parentIndex, transCounts
 
