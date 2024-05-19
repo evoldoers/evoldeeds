@@ -1,0 +1,19 @@
+Plan for REST API.
+
+Ultra-simple at first: client can query list of families, retrieve specific family, and post or retrieve a history.
+Database tracks current best history for each family.
+
+1. Create DynamoDB tables
+2. Create Lambda CRUD API https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-dynamo-db.html
+3. Create a Makefile for updating Lambda function
+4. Create Cognito user pool, add authentication
+
+DynamoDB tables:
+evoldeeds-families. Primary key 'id'
+evoldeeds-histories. Partition key 'id', sort key 'date'
+
+API
+api.evoldeeds.com/families/ GET
+api.evoldeeds.com/families/{id} GET
+api.evoldeeds.com/histories/{family}/ POST
+api.evoldeeds.com/histories/{family}/{id} GET
