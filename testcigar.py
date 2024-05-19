@@ -22,7 +22,7 @@ with open(modelFilename, 'r') as f:
 ct = cigartree.makeCigarTree (treeStr, alignStr)
 
 alphabet, mixture, indelParams = likelihood.parseHistorianParams (modelJson)
-seqs, distanceToParent, parentIndex, transCounts = cigartree.getHMMSummaries (treeStr, alignStr, alphabet)
+seqs, nodeName, distanceToParent, parentIndex, transCounts = cigartree.getHMMSummaries (treeStr, alignStr, alphabet)
 
 subll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, *mixture[0])
 subll_total = float (jnp.sum (subll))

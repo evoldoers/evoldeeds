@@ -40,9 +40,7 @@ const zeroTimeTransitionMatrix = (indelParams) => {
 // convert counts (a,b,u,q) to transition matrix ((a,b,c),(f,g,h),(p,q,r))
 const smallTimeTransitionMatrix = (t, indelParams) => {
     const [lam,mu,x,y] = indelParams;
-    const steps = 100;
-    const dt0 = 1e-6;
-    const [a,b,u,q] = integrateCounts(t,indelParams,steps,dt0);
+    const [a,b,u,q] = integrateCounts_RK4(t,indelParams);
     const L = lm(t,lam,x);
     const M = lm(t,mu,y);
     return [[a,b,1-a-b],
@@ -74,14 +72,8 @@ export const dummyRootTransitionMatrix = () => {
 };
 
 // Runge-Kutta integration
-const integrateCounts = (t, params, steps, dt0) => {
+const integrateCounts_RK4 = (t, params, steps=100, dt0=1e-6) => {
   const [lam,mu,x,y] = params;
-  const T0 = [1.,0.,0.,0.];
-  const dt0_abs = Math.min (t/steps, dt0 / Math.min(1.,1./Math.max(lam,mu)));
-  const dlog = Math.log (t/dt0_abs) / steps;
-  const ts = Array.from({length: steps}, (_,i) => Math.exp(dlog*i) * dt0_abs);
-  const ts_with_0 = [0].concat (ts);
-  const dts = ts.map ((t,i) => t - ts_with_0[i]);
   const RK4body = (T, dt, n) => {
     const t = ts_with_0[n];
     const compute_derivs = (k, f) => {
@@ -98,5 +90,11 @@ const integrateCounts = (t, params, steps, dt0) => {
         T[i] += dt * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i]) / 6;
     return T;
   };
+  const T0 = [1.,0.,0.,0.];
+  const dt0_abs = Math.min (t/steps, dt0 / Math.min(1.,1./Math.max(lam,mu)));
+  const dlog = Math.log (t/dt0_abs) / (steps - 1);
+  const ts = Array.from({length: steps}, (_,i) => Math.exp(dlog*i) * dt0_abs);
+  const ts_with_0 = [0].concat (ts);
+  const dts = ts.map ((t,i) => t - ts_with_0[i]);
   return dts.reduce (RK4body, T0);
 };

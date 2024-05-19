@@ -45,9 +45,7 @@ def initCounts(indelParams):
     return jnp.array ((1., 0., 0., 0.))
     
 # Runge-Kutte (RK4) numerical integration routine
-# This is retained solely to have a simpler routine independent of diffrax, if needed for debugging
-# Currently we just use integrateCounts instead, so this function is never called
-def integrateCounts_RK4 (t, indelParams, /, steps=10, dt0=None):
+def integrateCounts_RK4 (t, indelParams, /, steps=100, dt0=1e-6):
   lam,mu,x,y = indelParams
   def RK4body (y, t_dt):
     t, dt = t_dt
@@ -58,8 +56,7 @@ def integrateCounts_RK4 (t, indelParams, /, steps=10, dt0=None):
     y = y + dt*(k1 + 2*k2 + 2*k3 + k4)/6
     return y, y
   y0 = initCounts (indelParams)
-  if dt0 is None:
-    dt0 = 0.1 / jnp.maximum (lam, mu)
+  dt0 = jnp.minimum (t/steps, dt0 / jnp.minimum(1,1/jnp.maximum (lam, mu)))
   ts = jnp.geomspace (dt0, t, num=steps)
   ts_with_0 = jnp.concatenate ([jnp.array([0]), ts])
   dts = jnp.ediff1d (ts_with_0)
@@ -87,7 +84,7 @@ def zeroTimeTransitionMatrix (indelParams):
 # convert counts (a,b,u,q) to transition matrix ((a,b,c),(f,g,h),(p,q,r))
 def smallTimeTransitionMatrix (t, indelParams, /, **kwargs):
     lam,mu,x,y = indelParams
-    (a,b,u,q), _counts = integrateCounts_RK4(t,indelParams,dt0=.1/jnp.maximum(lam,mu))
+    (a,b,u,q), _counts = integrateCounts_RK4(t,indelParams)
     L = lm(t,lam,x)
     M = lm(t,mu,y)
     one_minus_L = jnp.where (L < 1., 1. - L, smallest_float32)   # avoid NaN gradient at zero

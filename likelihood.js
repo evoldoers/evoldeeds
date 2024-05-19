@@ -36,7 +36,7 @@ const gapProb = (nDeletions, nInsertions, transmat) => {
 //  alphabet: array of characters representing the alphabet
 //  subRate: substitution rate matrix
 //  rootProb: root frequencies (typically equilibrium frequencies for substitution rate matrix)
-export const subLogLike = (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, subRate, rootProb) => {
+export const subLogLike = (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, subRate, rootProb, gapChar = '-') => {
     const subRateMatrix = math.matrix(subRate);
     const branchProbMatrix = distanceToParent.map (d => math.expm(math.multiply(subRateMatrix,d)));
     const branchLogProbMatrix = branchProbMatrix.map ((m) => math.map (m, (x) => Math.log(Math.max(Number.MIN_VALUE,x))));
@@ -50,26 +50,20 @@ export const subLogLike = (alignment, distanceToParent, leavesByColumn, internal
         const internals = internalsByColumn[col];
         const leaves = leavesByColumn[col];
         const branches = branchesByColumn[col];
-        const root = internals.length > 0 ? internals[0] : leaves[0];
+        const root = internals.length > 0 ? internals[internals.length-1] : leaves[0];
         leaves.forEach((leaf) => {
             const char = alignment[leaf][col];
-            if (char === '-') throw new Error ("unexpected gap at row " + leaf + " col " + col + ': ' + alignment)
+            if (char === gapChar) throw new Error ("unexpected gap at row " + leaf + " col " + col + ': ' + alignment)
             const token = alphabet.indexOf(char);
             tokenIndices.forEach((i) => { logF[leaf][i] = i === token ? 0 : -Infinity; });
-            console.warn('col ' + col + ' leaf ' + leaf + ' char ' + char + ' logF ' + logF[leaf])
         });
         internals.forEach((node) => {
-            branches[node].forEach((child) => {
-                console.warn('col ' + col + ' child ' + child + ' mx ' + branchLogProbMatrix[child] + ' logF ' + logF[child])
-            });
             tokenIndices.forEach((i) => {
                 logF[node][i] = sum (branches[node].map((child) => logsumexp (tokenIndices.map((j) => branchLogProbMatrix[child].get([i,j]) + logF[child][j]))));
             });
         });
-        console.warn('col ' + col + ' after',{logF})
         const clp_lse = tokenIndices.map((i) => rootLogProb.get([i]) + logF[root][i]);
         const clp = logsumexp (clp_lse);
-        console.warn('col ' + col,{clp_lse,clp})
         return clp;
     });
     return colLogProb;

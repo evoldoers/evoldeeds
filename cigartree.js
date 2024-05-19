@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { parse } from 'newick-js';
+import { parse_newick } from 'biojs-io-newick';
 
 const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 
@@ -15,8 +15,8 @@ const cigarRegex = /^(\d+[MID])*$/;
 const cigarGroupRegex = /(\d+)([MID])/g;
 export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') => {
     // Build a list of nodes in preorder
-    let nodeList = [], nodeParentIndex = [], nodeChildIndex = [], distanceToParent = [], nodeById = {};
-    const visitSubtree = (node, parentIndex) => {
+    let nodeList = [], parentIndex = [], childIndex = [], distanceToParent = [], nodeById = {};
+    const visitSubtree = (node, pi) => {
         const nodeIndex = nodeList.length;
         if ('id' in node) {
             if (node.id in nodeById)
@@ -24,11 +24,11 @@ export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') =>
             nodeById[node.id] = node;
         }
         nodeList.push(node);
-        nodeParentIndex.push(parentIndex);
+        parentIndex.push(pi);
         distanceToParent.push(node.distance || 0);
-        nodeChildIndex.push([]);
+        childIndex.push([]);
         if (node.child)
-            nodeChildIndex[nodeIndex] = node.child.map((child) => visitSubtree(child,nodeIndex));
+            childIndex[nodeIndex] = node.child.map((child) => visitSubtree(child,nodeIndex));
         return nodeIndex;
     }
     visitSubtree(rootNode,undefined);
@@ -66,10 +66,10 @@ export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') =>
                 nextSeqPos[row]++;                
             } else
                 alignment[row] += wildcard;
-            if (nodeChildIndex[row].length === 0)
+            if (childIndex[row].length === 0)
                 leaves.push(row);
             else {
-                branches[row] = nodeChildIndex[row].filter ((childRow) => {
+                branches[row] = childIndex[row].filter ((childRow) => {
                         if (nextCigarPos[childRow] >= expandedCigar[childRow].length)
                             throw new Error("CIGAR string ended prematurely in node " + nodeName(childRow));
                         const childCigarChar = expandedCigar[childRow][nextCigarPos[childRow]];
@@ -100,7 +100,6 @@ export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') =>
         assert (alignment.filter((row)=>row.length!==nColumns).length === 0)
         assert (leaves.filter((r)=>alignment[r][-1]===gap).length === 0)
     }
-    console.warn({alignment,leavesByColumn})
     assert (leavesByColumn.filter((leaves,col)=>leaves.filter((leaf)=>alignment[leaf][col]==='-').length).length===0)
     // verify that all cursors reached the end of the respective expanded CIGAR strings (and sequences, if supplied)
     const badCigarRow = nextCigarPos.findIndex ((pos,row) => pos < expandedCigar[row].length);
@@ -110,7 +109,7 @@ export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') =>
     if (badSeqRow >= 0)
         throw new Error("Sequence not fully processed in node " + nodeName(badCigarRow) + " (position " + nextSeqPos[badSeqRow] + " of " + getSequence(nodeList[badSeqRow]) + ")");
     // return
-    return {alignment, gap, wildcard, expandedCigar, nRows, nColumns, leavesByColumn, internalsByColumn, branchesByColumn, rootByColumn, nodeList, nodeParentIndex, distanceToParent, nodeChildIndex, nodeById};
+    return {alignment, gap, wildcard, expandedCigar, nRows, nColumns, leavesByColumn, internalsByColumn, branchesByColumn, rootByColumn, nodeList, parentIndex, distanceToParent, childIndex, nodeById};
 };
 
 // Verify that there is a one-to-one mapping between leaf nodes and sequences in a separate sequence dataset.
@@ -162,23 +161,16 @@ export const countGapSizes = (expandedCigar) => {
 };
 
 const parseNewick = (newickStr) => {
-    const { graph, root } = parse(newickStr);
-    const unsortedNodes = Array.from (graph[0]), edges = Array.from (graph[1]);
-    let nodes = [];
-    const traverse = (node) => {
-        nodes.push (node);
-        edges.filter ((e) => e[0] === node).map ((e) => traverse(e[1]));
+    const tree = parse_newick(newickStr);
+    let nodeName = [], parentIndex = [], distanceToParent = [];
+    const visitNode = (node, p) => {
+        const n = nodeName.length;
+        nodeName.push (node.name || undefined);
+        parentIndex.push (p);
+        distanceToParent.push (node.length || node.branch_length || 0);
+        node.children?.forEach ((child) => visitNode(child,n));
     };
-    traverse (root);  // get nodes in preorder
-    let parentIndex = nodes.map (() => -1);
-    let distanceToParent = nodes.map (() => 0);
-    edges.forEach ((e) => {
-        const p = nodes.indexOf(e[0]), c = nodes.indexOf(e[1]), d = e[2];
-        parentIndex[c] = p;
-        distanceToParent[c] = d;
-    });
-    assert (parentIndex.slice(1).filter((p) => p < 0).length === 0);
-    const nodeName = nodes.map ((n) => 'label' in n ? n.label : undefined);
+    visitNode (tree, -1);
     return { parentIndex, distanceToParent, nodeName };
 };
 
@@ -237,16 +229,19 @@ const addPathsToMRCAs = (seqs, parentIndex, gapChar = '-', wildChar = 'x') => {
     seqs = seqs.map ((s) => s.split(''));
     for (let col = 0; col < nCols; ++col) {
         let nUngappedDescendants = new Array(nRows).fill(0);
-        for (let row = nRows-1; row >= 0; --row) {
-            const isLeaf = children[row].length === 0;
-            if (isLeaf && seqs[row][col] != gapChar)
-                nUngappedDescendants[row] = 1;
-            else
-                nUngappedDescendants[row] = sum(children[row].map((c) => nUngappedDescendants[c]));
-        }
-        for (let row = 0; row < nRows; ++row) {
+        for (let row = nRows-1; row >= 0; --row)
+            nUngappedDescendants[row] = (children[row].length === 0
+                                         ? (seqs[row][col] === gapChar ? 0 : 1)
+                                         : sum(children[row].map((c) => nUngappedDescendants[c])));
+        let mrca;
+        for (let row = nRows-1; row >= 0; --row)
+            if (nUngappedDescendants[row] === nUngappedDescendants[0]) {
+                mrca = row;
+                break;
+            }
+        for (let row = mrca; row < nRows; ++row) {
             const isInternal = children[row].length;
-            if (isInternal && seqs[row][col] === gapChar && children[row].filter((c) => nUngappedDescendants[c] > 0).length > 1)
+            if (isInternal && seqs[row][col] === gapChar && nUngappedDescendants[row] > 0)
                 seqs[row][col] = wildChar;
         }
     }
@@ -324,5 +319,5 @@ export const getHMMSummaries = (newickStr, fastaStr, gapChar = '-') => {
     seqs = seqs.map ((s) => s.toLowerCase());
     const expandedCigars = getExpandedCigarsFromAlignment (seqs, parentIndex);
     const { transCounts } = countGapSizes(expandedCigars);
-    return { seqs, distanceToParent, parentIndex, transCounts };
+    return { seqs, nodeName, distanceToParent, parentIndex, transCounts };
 };

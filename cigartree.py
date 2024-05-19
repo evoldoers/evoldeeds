@@ -65,9 +65,14 @@ def addPathsToMRCAs (seqs, parentIndex, gapChar = '-', wildChar = 'x'):
                 nUngappedDescendants[row] = 1
             else:
                 nUngappedDescendants[row] = sum(nUngappedDescendants[c] for c in children[row])
-        for row in range(nRows):
+        mrca = None
+        for row in range(nRows-1,-1,-1):
+            if nUngappedDescendants[row] == nUngappedDescendants[0]:
+                mrca = row
+                break
+        for row in range(mrca,nRows):
             isInternal = len(children[row]) > 0
-            if isInternal and seqs[row][col] == gapChar and len([c for c in children[row] if nUngappedDescendants[c] > 0]) > 1:
+            if isInternal and seqs[row][col] == gapChar and nUngappedDescendants[row] > 0:
                 seqs[row][col] = wildChar
     seqs = [''.join(s) for s in seqs]
     return seqs
@@ -166,7 +171,7 @@ def getHMMSummaries (newickStr, fastaStr, alphabet, gapChar = '-'):
     _gapSizeCounts, transCounts = countGapSizes(expandedCigars)
     transCounts = jnp.stack (transCounts, axis=0)
     seqs = tokenizeAlignment (seqs, alphabet)
-    return seqs, distanceToParent, parentIndex, transCounts
+    return seqs, nodeName, distanceToParent, parentIndex, transCounts
 
 
 def tokenizeAlignment (seqs, alphabet):

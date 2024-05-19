@@ -1,6 +1,6 @@
 
 import fs from 'fs';
-import { makeCigarTree, expandCigarTree, getHMMSummaries } from './cigartree.js';
+import { makeCigarTree, expandCigarTree, getHMMSummaries, countGapSizes } from './cigartree.js';
 import { parseHistorianParams, subLogLike, sum } from './likelihood.js';
 import { transitionMatrix, dummyRootTransitionMatrix } from './h20.js';
 
@@ -15,14 +15,14 @@ const alignStr = fs.readFileSync(alignFilename).toString();
 const modelJson = JSON.parse (fs.readFileSync(modelFilename).toString());
 
 const ct = makeCigarTree (treeStr, alignStr);
-const { leavesByColumn, internalsByColumn, branchesByColumn } = expandCigarTree (ct);
+const { alignment, expandedCigar, nodeName, distanceToParent, parentIndex, leavesByColumn, internalsByColumn, branchesByColumn } = expandCigarTree (ct);
+const lcAlignment = alignment.map ((s) => s.toLowerCase());
 
 const { alphabet, mixture, indelParams } = parseHistorianParams (modelJson);
-const { seqs, distanceToParent, parentIndex, transCounts } = getHMMSummaries (treeStr, alignStr, alphabet);
+const { transCounts } = countGapSizes (expandedCigar);
 
 const { subRate, rootProb } = mixture[0];
-const subll = subLogLike (seqs, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, subRate, rootProb);
-console.warn({subll})
+const subll = subLogLike (lcAlignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, subRate, rootProb);
 const subll_total = sum (subll);
 
 let transMat = [dummyRootTransitionMatrix()].concat (distanceToParent.slice(1).map((t)=>transitionMatrix(t,indelParams,alphabet.length)));
