@@ -43,10 +43,19 @@ const smallTimeTransitionMatrix = (t, indelParams) => {
     const [a,b,u,q] = integrateCounts_RK4(t,indelParams);
     const L = lm(t,lam,x);
     const M = lm(t,mu,y);
-    return [[a,b,1-a-b],
-            [u*L/(1-L),1-(b+q*(1-M)/M)*L/(1-L),(b+q*(1-M)/M-u)*L/(1-L)],
-            [(1-a-u)*M/(1-M),q,1-q-(1-a-u)*M/(1-M)]];
+    const mx = [[a,b,1-a-b],
+                [u*L/(1-L),1-(b+q*(1-M)/M)*L/(1-L),(b+q*(1-M)/M-u)*L/(1-L)],
+                [(1-a-u)*M/(1-M),q,1-q-(1-a-u)*M/(1-M)]];
+    return normalizeTransMatrix(mx);
 };
+
+export const normalizeTransMatrix = (mx) => {
+  mx = mx.map ((row) => row.map ((x) => Math.max(x,0)));
+  mx = mx.map ((row) => { const norm = sum(row); return row.map ((x) => x / norm); });
+  return mx;
+};
+
+const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 
 // get limiting transition matrix for large times
 const largeTimeTransitionMatrix = (t, indelParams) => {

@@ -1,4 +1,5 @@
 import * as math from 'mathjs';
+import { transitionMatrix, dummyRootTransitionMatrix, normalizeTransMatrix } from './h20.js';
 
 // Binomial coefficient using gamma functions
 const log_binom = (x, y) => lgamma(x+1) - lgamma(y+1) - lgamma(x-y+1);
@@ -36,9 +37,8 @@ const gapProb = (nDeletions, nInsertions, transmat) => {
 //  alphabet: array of characters representing the alphabet
 //  subRate: substitution rate matrix
 //  rootProb: root frequencies (typically equilibrium frequencies for substitution rate matrix)
-export const subLogLike = (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, subRate, rootProb, gapChar = '-') => {
-    const subRateMatrix = math.matrix(subRate);
-    const branchProbMatrix = distanceToParent.map (d => math.expm(math.multiply(subRateMatrix,d)));
+export const subLogLike = (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, rootProb, branchProbMatrixConfig, gapChar = '-') => {
+    const branchProbMatrix = makeBranchProbMatrices (distanceToParent, branchProbMatrixConfig);
     const branchLogProbMatrix = branchProbMatrix.map ((m) => math.map (m, (x) => Math.log(Math.max(Number.MIN_VALUE,x))));
     const rootLogProb = math.map (math.matrix(rootProb), Math.log);
     const nColumns = leavesByColumn.length;
@@ -67,6 +67,52 @@ export const subLogLike = (alignment, distanceToParent, leavesByColumn, internal
         return clp;
     });
     return colLogProb;
+};
+
+const makeBranchProbMatrices = (distanceToParent, branchProbMatrixConfig) => {
+    let branchProbMatrix;
+    if ('evals' in branchProbMatrixConfig) {
+        const { evecs_l, evals, evecs_r } = branchProbMatrixConfig;
+        const evecsLMatrix = math.matrix (evecs_l);
+        const evalsVector = math.matrix (evals);
+        const evecsRMatrix = math.matrix (evecs_r);
+        branchProbMatrix = distanceToParent.map (d => math.multiply(evecsRMatrix,
+                                                                    math.diag (math.map (math.multiply (evalsVector, d), math.exp)),
+                                                                    evecsLMatrix));
+    } else if ('subRate' in branchProbMatrixConfig) {
+        const { subRate } = branchProbMatrixConfig;
+        const subRateMatrix = math.matrix(subRate);
+        branchProbMatrix = distanceToParent.map (d => math.expm(math.multiply(subRateMatrix,d)));
+    }
+    return branchProbMatrix;
+};
+
+export const transLogLike = (transCounts, distanceToParent, branchTransConfig) => {
+    const transMat = makeBranchTransMatrices (distanceToParent, branchTransConfig);
+    const logTransMat = transMat.map ((mt) => mt.map((mti) => mti.map((mtij) => Math.log (Math.max (mtij, Number.MIN_VALUE)))));
+    const transll = transCounts.map ((mt,t) => mt.map((mti,i) => mti.map((mtij,j) => mtij * logTransMat[t][i][j])));
+    return transll.map ((mt) => sum (mt.map(sum)));
+};
+
+const makeBranchTransMatrices = (distanceToParent, branchTransConfig) => {
+    let branchTransMatrix;
+    distanceToParent = distanceToParent.slice(1);
+    if ('poly' in branchTransConfig) {
+        const { poly, tmin, tmax } = branchTransConfig;
+        branchTransMatrix = distanceToParent.map ((t)=> polyBranchTransMatrix(t,poly,tmin,tmax));
+    } else {
+        const { indelParams, alphabet } = branchTransConfig;
+        branchTransMatrix = distanceToParent.map ((t) => transitionMatrix(t,indelParams,alphabet.length));
+    }
+    return [dummyRootTransitionMatrix()].concat (branchTransMatrix);
+};
+
+const polyBranchTransMatrix = (t, coeffs, tmin, tmax) => {
+    t = Math.min (tmax, Math.max (tmin, t));
+    const deg = coeffs[0][0].length;
+    const tPow = Array.from ({length:deg},(_,n)=>t**n);
+    const trans = coeffs.map ((coeffs_i) => coeffs_i.map ((coeffs_ij) => coeffs_ij.reduce ((val, coeff, n) => val + coeff*tPow[n], 0)));
+    return normalizeTransMatrix(trans);
 };
 
 const normalizeSubModel = (subRate, rootProb) => {

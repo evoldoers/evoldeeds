@@ -11,6 +11,8 @@ from jax import jit
 import diffrax
 from diffrax import diffeqsolve, ODETerm, Dopri5, PIDController, ConstantStepSize, SaveAt
 
+import logging
+
 # We replace zeroes and infinities with small numbers sometimes
 # It's sinful but that's life for you
 min_float32 = jnp.finfo('float32').min
@@ -89,9 +91,12 @@ def smallTimeTransitionMatrix (t, indelParams, /, **kwargs):
     M = lm(t,mu,y)
     one_minus_L = jnp.where (L < 1., 1. - L, smallest_float32)   # avoid NaN gradient at zero
     one_minus_M = jnp.where (M < 1., 1. - M, smallest_float32)   # avoid NaN gradient at zero
-    return jnp.array ([[a,b,1-a-b],
-                      [u*L/one_minus_L,1-(b+q*(1-M)/M)*L/one_minus_L,(b+q*(1-M)/M-u)*L/one_minus_L],
-                       [(1-a-u)*M/one_minus_M,q,1-q-(1-a-u)*M/one_minus_M]])
+    mx = jnp.array ([[a,b,1-a-b],
+                     [u*L/one_minus_L,1-(b+q*(1-M)/M)*L/one_minus_L,(b+q*(1-M)/M-u)*L/one_minus_L],
+                     [(1-a-u)*M/one_minus_M,q,1-q-(1-a-u)*M/one_minus_M]])
+    mx = jnp.maximum (0, mx)
+    mx = mx / jnp.sum (mx, axis=-1, keepdims=True)
+    return mx
 
 # get limiting transition matrix for large times
 def largeTimeTransitionMatrix (t, indelParams):
