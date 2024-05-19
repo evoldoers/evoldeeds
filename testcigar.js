@@ -14,7 +14,7 @@ const alignStr = fs.readFileSync(alignFilename).toString();
 const modelJson = JSON.parse (fs.readFileSync(modelFilename).toString());
 
 const ct = makeCigarTree (treeStr, alignStr);
-const { alignment, expandedCigar, nodeName, distanceToParent, parentIndex, leavesByColumn, internalsByColumn, branchesByColumn } = expandCigarTree (ct);
+const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn } = expandCigarTree (ct);
 const lcAlignment = alignment.map ((s) => s.toLowerCase());
 
 const { alphabet, mixture, indelParams } = parseHistorianParams (modelJson);
