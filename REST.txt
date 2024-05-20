@@ -1,6 +1,7 @@
 Plan for REST API.
 
 NB: polynomial approximation seems *less* accurate than RK4! And - perhaps - not significantly faster.
+
 Ultra-simple at first: client can query list of families, retrieve specific family, and post or retrieve a history.
 Database tracks current best history for each family.
 
