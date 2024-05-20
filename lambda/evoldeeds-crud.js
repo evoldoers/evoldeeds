@@ -68,7 +68,7 @@ export const handler = async (event, context) => {
             })
           );
         const seqById = family.Item.seqById;
-        const history = JSON.parse(event.body);
+        const { history, player } = JSON.parse(event.body);
         const modelJson = JSON.parse (fs.readFileSync(modelFilename).toString());
         const score = historyScore (history, seqById, modelJson);
 
@@ -80,6 +80,7 @@ export const handler = async (event, context) => {
               family_id,
               created,
               history,
+              player,
               score
             },
             ConditionExpression: 'attribute_not_exists(family_id)'
@@ -95,6 +96,7 @@ export const handler = async (event, context) => {
                     Item: {
                         ...family.Item,
                         history: { created },
+                        player,
                         score
                     },
                     ConditionExpression: 'attribute_not_exists(#score) OR #score < :newScore',
