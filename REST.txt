@@ -1,7 +1,5 @@
 Plan for REST API.
 
-NB: polynomial approximation seems *less* accurate than RK4! And - perhaps - not significantly faster.
-
 Ultra-simple at first: client can query list of families, retrieve specific family, and post or retrieve a history.
 Database tracks current best history for each family.
 
@@ -17,5 +15,5 @@ evoldeeds-histories. Partition key 'family_id', sort key 'date'
 API
 api.evoldeeds.com/families/ GET
 api.evoldeeds.com/families/{id} GET
-api.evoldeeds.com/histories/{family_id}/{date} PUT
+api.evoldeeds.com/histories/{family_id} POST
 api.evoldeeds.com/histories/{family_id}/{date} GET
