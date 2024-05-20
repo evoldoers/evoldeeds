@@ -44,7 +44,7 @@ export const handler = async (event, context) => {
         body = await dynamo.send(
           new ScanCommand({ TableName: familyTableName })
         );
-        body = body.Items;
+        body = body.Items.map ((item) => item.id);
         break;
       case "GET /histories/{id}/{date}":
         body = await dynamo.send(
@@ -68,10 +68,11 @@ export const handler = async (event, context) => {
               },
             })
           );
+        const seqById = family.Item.seqById;
         
         const history = JSON.parse(event.body);
-        const expandedHistory = expandCigarTree (history, family.seqById);
-        if (!doLeavesMatchSequences (expandedHistory, family.seqById))
+        const expandedHistory = expandCigarTree (history, seqById);
+        if (!doLeavesMatchSequences (expandedHistory, seqById))
             throw new Error ("History does not match sequences");
 
         const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn } = expandedHistory;
@@ -104,16 +105,17 @@ export const handler = async (event, context) => {
         );
 
         let newBestScore = false;
-        if (!family.score || score > family.score)
+        if (!family.Item.score || score > family.Item.score)
             try {
                 await dynamo.send(
                     new PutCommand({
                     TableName: familyTableName,
                     Item: {
-                        ...family,
+                        ...family.Item,
+                        history: { created },
                         score
                     },
-                    ConditionExpression: '#score < :newScore',
+                    ConditionExpression: 'attribute_not_exists(#score) OR #score < :newScore',
                     ExpressionAttributeNames: { '#score': 'score' },
                     ExpressionAttributeValues: { ':newScore': score },
                     })
@@ -130,7 +132,7 @@ export const handler = async (event, context) => {
     }
   } catch (err) {
     statusCode = 400;
-    body = err.message;
+    body = err.message + "\n" + err.stack;
   } finally {
     body = JSON.stringify(body);
   }

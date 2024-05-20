@@ -107,7 +107,7 @@ export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') =>
         throw new Error("CIGAR string not fully processed in node " + nodeName(badCigarRow) + " (position " + nextCigarPos[badCigarRow] + " of " + expandedCigar[badCigarRow] + ")");
     const badSeqRow = nextSeqPos.findIndex ((pos,row) => typeof(getSequence(nodeList[row]))==='string' && pos < getSequence(nodeList[row]).length);
     if (badSeqRow >= 0)
-        throw new Error("Sequence not fully processed in node " + nodeName(badCigarRow) + " (position " + nextSeqPos[badSeqRow] + " of " + getSequence(nodeList[badSeqRow]) + ")");
+        throw new Error("Sequence not fully accounted for in node " + nodeName(badCigarRow) + " (position " + nextSeqPos[badSeqRow] + " of " + getSequence(nodeList[badSeqRow]) + ")");
     // return
     return {alignment, gap, wildcard, expandedCigar, nRows, nColumns, leavesByColumn, internalsByColumn, branchesByColumn, rootByColumn, nodeList, parentIndex, distanceToParent, childIndex, nodeById};
 };
@@ -174,7 +174,7 @@ const parseNewick = (newickStr) => {
     return { parentIndex, distanceToParent, nodeName };
 };
 
-const parseFasta = (fastaStr, requireFlush = false) => {
+export const parseFasta = (fastaStr, requireFlush = false, forceLowerCase = false) => {
     const lines = fastaStr.split('\n');
     let seqByName = {}, seqNames = [], name;
     lines.forEach ((line) => {
@@ -182,8 +182,11 @@ const parseFasta = (fastaStr, requireFlush = false) => {
             name = line.substr(1).split(' ')[0];
             seqNames.push(name);
             seqByName[name] = '';
-        } else
+        } else {
+            if (forceLowerCase)
+                line = line.toLowerCase();
             seqByName[name] += line;
+        }
     });
     if (requireFlush) {
         const seqLengths = Object.values(seqByName).map((s) => s.length);
@@ -286,9 +289,10 @@ const compressCigarString = (stateStr) => {
     return cigar.join('');
 };
 
-export const makeCigarTree = (newickStr, fastaStr, gapChar = '-') => {
+export const makeCigarTree = (newickStr, fastaStr, opts = {}) => {
+    const { forceLowerCase, gapChar, omitSeqs } = { forceLowerCase: false, gapChar: '-', omitSeqs: false, ...opts };
     const { parentIndex, distanceToParent, nodeName } = parseNewick (newickStr);
-    const { seqByName } = parseFasta (fastaStr, requireFlush = true);
+    const { seqByName } = parseFasta (fastaStr, true, forceLowerCase);
     let seqs = orderAlignmentSeqs (seqByName, nodeName);
     seqs = addPathsToMRCAs (seqs, parentIndex, gapChar);
     const expandedCigars = getExpandedCigarsFromAlignment (seqs, parentIndex, gapChar);
@@ -302,7 +306,7 @@ export const makeCigarTree = (newickStr, fastaStr, gapChar = '-') => {
         if (n > 0)
             node['distance'] = distanceToParent[n];
         node['cigar'] = cigars[n];
-        if (id && id in seqByName)
+        if (!omitSeqs && id && id in seqByName)
             node['seq'] = seqByName[id].replaceAll(gapChar,'');
         if (children[n].length > 0)
             node['child'] = children[n].map(makeNode);

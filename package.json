@@ -10,6 +10,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.577.0",
+    "@aws-sdk/lib-dynamodb": "^3.577.0",
     "biojs-io-newick": "^1.5.0",
     "mathjs": "^12.4.2"
   }
