@@ -8,7 +8,7 @@ but the server does not need to verify that the client is logged in as that play
 
 DynamoDB tables:
 evoldeeds-families. Primary key 'id'
-evoldeeds-histories. Partition key 'family_id', sort key 'date'
+evoldeeds-histories. Partition key 'family_id', sort key 'created'
 
 API
 api.evoldeeds.com/families/ GET
