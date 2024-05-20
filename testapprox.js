@@ -1,6 +1,6 @@
 
 import fs from 'fs';
-import { makeCigarTree, expandCigarTree, getHMMSummaries, countGapSizes } from './cigartree.js';
+import { makeCigarTree, expandCigarTree, countGapSizes } from './cigartree.js';
 import { subLogLike, transLogLike, sum } from './likelihood.js';
 
 if (process.argv.length != 5) {

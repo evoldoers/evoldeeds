@@ -174,7 +174,7 @@ const parseNewick = (newickStr) => {
     return { parentIndex, distanceToParent, nodeName };
 };
 
-const parseFasta = (fastaStr, requireFlush = true) => {
+const parseFasta = (fastaStr, requireFlush = false) => {
     const lines = fastaStr.split('\n');
     let seqByName = {}, seqNames = [], name;
     lines.forEach ((line) => {
@@ -288,7 +288,7 @@ const compressCigarString = (stateStr) => {
 
 export const makeCigarTree = (newickStr, fastaStr, gapChar = '-') => {
     const { parentIndex, distanceToParent, nodeName } = parseNewick (newickStr);
-    const { seqByName } = parseFasta (fastaStr);
+    const { seqByName } = parseFasta (fastaStr, requireFlush = true);
     let seqs = orderAlignmentSeqs (seqByName, nodeName);
     seqs = addPathsToMRCAs (seqs, parentIndex, gapChar);
     const expandedCigars = getExpandedCigarsFromAlignment (seqs, parentIndex, gapChar);
@@ -309,15 +309,4 @@ export const makeCigarTree = (newickStr, fastaStr, gapChar = '-') => {
         return node;
     };
     return makeNode(0);
-};
-
-export const getHMMSummaries = (newickStr, fastaStr, gapChar = '-') => {
-    const { parentIndex, distanceToParent, nodeName } = parseNewick (newickStr);
-    const { seqByName } = parseFasta (fastaStr);
-    let seqs = orderAlignmentSeqs (seqByName, nodeName);
-    seqs = addPathsToMRCAs (seqs, parentIndex);
-    seqs = seqs.map ((s) => s.toLowerCase());
-    const expandedCigars = getExpandedCigarsFromAlignment (seqs, parentIndex);
-    const { transCounts } = countGapSizes(expandedCigars);
-    return { seqs, nodeName, distanceToParent, parentIndex, transCounts };
 };

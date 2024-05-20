@@ -6,6 +6,8 @@ Database tracks current best history for each family.
 1. Before posting: validate history, check family exists, retrieve family sequences, check history explains family, calculate score
 2. If score is better than current best for family, update family table
 3. Create Cognito user pool, add authentication
+4. Make client script to create a family
+5. Make client script to add a history from a tree & FASTA alignment
 
 DynamoDB tables:
 evoldeeds-families. Primary key 'id'
