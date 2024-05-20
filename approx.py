@@ -5,7 +5,7 @@ import logging
 import h20
 
 smallest_float32 = np.finfo('float32').smallest_normal
-def logTransitionMatrixPolynomialApproximation (indelParams, alphabetSize, degree = 8, tmin = 1e-6, tmax = 2, steps = 100, epsilon = 1e-9):
+def logTransitionMatrixPolynomialApproximation (indelParams, alphabetSize, degree = 8, tmin = 1e-6, tmax = 2, steps = 100):
     lam, mu, x, y = indelParams
     if tmax is None:
         tmax = tbound (lam, mu, x, y, alphabetSize)
@@ -17,6 +17,10 @@ def logTransitionMatrixPolynomialApproximation (indelParams, alphabetSize, degre
     ms_predicted = np.moveaxis (ms_predicted, 2, 0)  # (steps,3,3)
     ms_rmserr = np.sqrt (np.mean ((ms_predicted - ms) ** 2, axis=0))  # (3,3)
     return coeffs, tmin, tmax, ms_rmserr
+
+def piecewiseLinearCountsApproximation (indelParams, alphabetSize, tmax = 10, steps = 100):
+    _finalCounts, counts, tmin = h20.integrateCounts_RK4(tmax,indelParams,steps=steps)
+    return np.concatenate ([h20.initCounts(indelParams)[None,:], counts], axis=0), tmin, tmax, steps
 
 def substitutionMatrixDiagonalForm (subRate):
     evals, evecs_r = np.linalg.eig (subRate)

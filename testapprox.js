@@ -18,14 +18,13 @@ const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByC
 const lcAlignment = alignment.map ((s) => s.toLowerCase());
 
 const { alphabet, hmm, mixture } = modelJson;
-const { tmin, tmax, poly } = hmm;
 const { transCounts } = countGapSizes (expandedCigar);
 
 const { evecs_l, evals, evecs_r, root } = mixture[0];
 const subll = subLogLike (lcAlignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, root, { evecs_l, evals, evecs_r });
 const subll_total = sum (subll);
 
-const transll = transLogLike (transCounts, distanceToParent, { poly, tmin, tmax });
+const transll = transLogLike (transCounts, distanceToParent, hmm);
 const transll_total = sum (transll);
 
 console.log (JSON.stringify({'loglike':{'subs':subll_total,'indels':transll_total}, 'cigartree': ct}));

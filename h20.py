@@ -47,7 +47,7 @@ def initCounts(indelParams):
     return jnp.array ((1., 0., 0., 0.))
     
 # Runge-Kutte (RK4) numerical integration routine
-def integrateCounts_RK4 (t, indelParams, /, steps=100, dt0=1, **kwargs):
+def integrateCounts_RK4 (t, indelParams, /, steps=100, **kwargs):
   lam,mu,x,y = indelParams
   debug = kwargs.get('debug',0)
   def RK4body (y, t_dt):
@@ -64,17 +64,19 @@ def integrateCounts_RK4 (t, indelParams, /, steps=100, dt0=1, **kwargs):
             print(f"t={t} dt={dt} y_next={y_next}")
     return y_next, y_next
   y0 = initCounts (indelParams)
-  dt0 = jnp.minimum (t/steps, dt0 / jnp.minimum(1,1/jnp.maximum (lam, mu)))
+  gmrate = 1 / (1/lam + 1/mu)
+  dt0 = jnp.minimum (t/steps, 1/gmrate)
   ts = jnp.geomspace (dt0, t, num=steps)
   ts_with_0 = jnp.concatenate ([jnp.array([0]), ts])
   dts = jnp.ediff1d (ts_with_0)
-#  y1, ys = jax.lax.scan (RK4body, y0, (ts_with_0[:-1],dts))
-  y1 = y0
-  ys = []
-  for t,dt in zip(ts_with_0[0:-1],dts):
-    y1, y_out = RK4body (y1, (t,dt))
-    ys.append(y_out)
-  return y1, ys
+  y1, ys = jax.lax.scan (RK4body, y0, (ts_with_0[:-1],dts))
+# jax.lax.scan is equivalent to...
+#  y1 = y0
+#  ys = []
+#  for t,dt in zip(ts_with_0[0:-1],dts):
+#    y1, y_out = RK4body (y1, (t,dt))
+#    ys.append(y_out)
+  return y1, ys, dt0
 
 # test whether time is past threshold of alignment signal being undetectable
 def alignmentIsProbablyUndetectable (t, indelParams, alphabetSize):
@@ -97,7 +99,7 @@ def zeroTimeTransitionMatrix (indelParams):
 # convert counts (a,b,u,q) to transition matrix ((a,b,c),(f,g,h),(p,q,r))
 def smallTimeTransitionMatrix (t, indelParams, /, **kwargs):
     lam,mu,x,y = indelParams
-    (a,b,u,q), _counts = integrateCounts_RK4(t,indelParams,**kwargs)
+    (a,b,u,q), _counts, _ts = integrateCounts_RK4(t,indelParams,**kwargs)
     L = lm(t,lam,x)
     M = lm(t,mu,y)
     one_minus_L = jnp.where (L < 1., 1. - L, smallest_float32)   # avoid NaN gradient at zero

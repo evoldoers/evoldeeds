@@ -1,5 +1,5 @@
 import * as math from 'mathjs';
-import { transitionMatrix, dummyRootTransitionMatrix, normalizeTransMatrix } from './h20.js';
+import { transitionMatrix, dummyRootTransitionMatrix, normalizeTransMatrix, smallTimeTransitionMatrixFromCounts } from './h20.js';
 
 // Binomial coefficient using gamma functions
 const log_binom = (x, y) => lgamma(x+1) - lgamma(y+1) - lgamma(x-y+1);
@@ -97,7 +97,9 @@ export const transLogLike = (transCounts, distanceToParent, branchTransConfig) =
 const makeBranchTransMatrices = (distanceToParent, branchTransConfig) => {
     let branchTransMatrix;
     distanceToParent = distanceToParent.slice(1);
-    if ('poly' in branchTransConfig) {
+    if ('steps' in branchTransConfig) {
+        branchTransMatrix = distanceToParent.map ((t)=> piecewiseBranchTransMatrix(t,branchTransConfig));
+    } else if ('poly' in branchTransConfig) {
         const { poly, tmin, tmax } = branchTransConfig;
         branchTransMatrix = distanceToParent.map ((t)=> polyBranchTransMatrix(t,poly,tmin,tmax));
     } else {
@@ -105,6 +107,21 @@ const makeBranchTransMatrices = (distanceToParent, branchTransConfig) => {
         branchTransMatrix = distanceToParent.map ((t) => transitionMatrix(t,indelParams,alphabet.length));
     }
     return [dummyRootTransitionMatrix()].concat (branchTransMatrix);
+};
+
+const piecewiseBranchTransMatrix = (t, branchTransConfig) => {
+    const { t1, tmax, steps, lmxy, abuq } = branchTransConfig;
+    const logRatioPerStep = Math.log(tmax/t1) / steps;
+    const step = 1 + Math.ceil (Math.log(t/t1) / logRatioPerStep);
+    let abuq_t;
+    if (step > steps)
+        abuq_t = abuq[abuq.length - 1];
+    else {
+        const t_step = t1 * Math.exp ((step - 1) * logRatioPerStep), t_prev = step > 1 ? (t1 * Math.exp ((step - 2) * logRatioPerStep)) : 0;
+        const dt_rel = (t - t_prev) / (t_step - t_prev);
+        abuq_t = abuq[step].map ((abuq_step_n, n) => abuq[step-1][n] * (1 - dt_rel) + abuq_step_n * dt_rel);
+    }
+    return smallTimeTransitionMatrixFromCounts (t, lmxy, abuq_t);
 };
 
 const polyBranchTransMatrix = (t, coeffs, tmin, tmax) => {
