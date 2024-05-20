@@ -16,16 +16,19 @@ const ct = makeCigarTree (treeStr, alignStr, { forceLowerCase: true, omitSeqs: t
 console.warn(JSON.stringify(ct));
 
 const post = async (id, history) => {
+    console.warn ("Posting to " + url + id);
     const response = await fetch(url + id, {
         method: "POST",
-        mode: "cors",
+        // mode: "cors",
         // credentials: "same-origin", // include, *same-origin, omit
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(history),
       });
-      console.log (JSON.stringify(response.json()));
+      console.log("Status: " + response.status);
+      const result = await response.json();
+      console.log (JSON.stringify(result));
 };
 
 post (familyId, ct);

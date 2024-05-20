@@ -1,5 +1,6 @@
 import * as math from 'mathjs';
 import { transitionMatrix, dummyRootTransitionMatrix, normalizeTransMatrix, smallTimeTransitionMatrixFromCounts } from './h20.js';
+import { expandCigarTree, countGapSizes, doLeavesMatchSequences } from './cigartree.js';
 
 // Binomial coefficient using gamma functions
 const log_binom = (x, y) => lgamma(x+1) - lgamma(y+1) - lgamma(x-y+1);
@@ -156,3 +157,29 @@ export const parseHistorianParams = (params) => {
     return { alphabet, mixture, indelParams };
 };
 
+export const historyScore = (history, seqById, modelJson) => {
+    const expandedHistory = expandCigarTree (history, seqById);
+    if (!doLeavesMatchSequences (expandedHistory, seqById))
+        throw new Error ("History does not match sequences");
+
+    const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn } = expandedHistory;
+    const { transCounts } = countGapSizes (expandedCigar);
+
+    const { alphabet, hmm, mixture } = modelJson;
+
+    const { evecs_l, evals, evecs_r, root } = mixture[0];
+    const subll = subLogLike (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, root, { evecs_l, evals, evecs_r });
+    const subll_total = sum (subll);
+
+    const transll = transLogLike (transCounts, distanceToParent, hmm);
+    const transll_total = sum (transll);
+
+    const tokens = alphabet.split('');
+    let resFreq = Object.fromEntries (tokens.map((c) => [c,0]));
+    Object.values(seqById).forEach ((seq) => seq.split('').forEach((c) => ++resFreq[c]));
+    const null_total = tokens.reduce ((ll, c, n) => ll + resFreq[c] * Math.log(root[n]), 0);
+
+    const score = subll_total + transll_total - null_total;
+
+    return score;
+};
