@@ -81,7 +81,7 @@ export const dummyRootTransitionMatrix = () => {
 };
 
 // Runge-Kutta integration
-const integrateCounts_RK4 = (t, params, steps=100, dt0=1e-6) => {
+const integrateCounts_RK4 = (t, params, steps=100, dt0=1) => {
   const [lam,mu,x,y] = params;
   const RK4body = (T, dt, n) => {
     const t = ts_with_0[n];

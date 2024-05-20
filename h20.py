@@ -47,22 +47,33 @@ def initCounts(indelParams):
     return jnp.array ((1., 0., 0., 0.))
     
 # Runge-Kutte (RK4) numerical integration routine
-def integrateCounts_RK4 (t, indelParams, /, steps=100, dt0=1e-6):
+def integrateCounts_RK4 (t, indelParams, /, steps=100, dt0=1, **kwargs):
   lam,mu,x,y = indelParams
+  debug = kwargs.get('debug',0)
   def RK4body (y, t_dt):
     t, dt = t_dt
     k1 = derivs(t, y, indelParams)
     k2 = derivs(t+dt/2, y + dt*k1/2, indelParams)
     k3 = derivs(t+dt/2, y + dt*k2/2, indelParams)
     k4 = derivs(t+dt, y + dt*k3, indelParams)
-    y = y + dt*(k1 + 2*k2 + 2*k3 + k4)/6
-    return y, y
+    y_next = y + dt*(k1 + 2*k2 + 2*k3 + k4)/6
+    if debug:
+        if debug > 1:
+            print(f"t={t} dt={dt} y_next={y_next.tolist()} y={y.tolist()} k1={k1.tolist()} k2={k2.tolist()} k3={k3.tolist()} k4={k4.tolist()}")
+        else:
+            print(f"t={t} dt={dt} y_next={y_next}")
+    return y_next, y_next
   y0 = initCounts (indelParams)
   dt0 = jnp.minimum (t/steps, dt0 / jnp.minimum(1,1/jnp.maximum (lam, mu)))
   ts = jnp.geomspace (dt0, t, num=steps)
   ts_with_0 = jnp.concatenate ([jnp.array([0]), ts])
   dts = jnp.ediff1d (ts_with_0)
-  y1, ys = jax.lax.scan (RK4body, y0, (ts_with_0[:-1],dts))
+#  y1, ys = jax.lax.scan (RK4body, y0, (ts_with_0[:-1],dts))
+  y1 = y0
+  ys = []
+  for t,dt in zip(ts_with_0[0:-1],dts):
+    y1, y_out = RK4body (y1, (t,dt))
+    ys.append(y_out)
   return y1, ys
 
 # test whether time is past threshold of alignment signal being undetectable
@@ -86,7 +97,7 @@ def zeroTimeTransitionMatrix (indelParams):
 # convert counts (a,b,u,q) to transition matrix ((a,b,c),(f,g,h),(p,q,r))
 def smallTimeTransitionMatrix (t, indelParams, /, **kwargs):
     lam,mu,x,y = indelParams
-    (a,b,u,q), _counts = integrateCounts_RK4(t,indelParams)
+    (a,b,u,q), _counts = integrateCounts_RK4(t,indelParams,**kwargs)
     L = lm(t,lam,x)
     M = lm(t,mu,y)
     one_minus_L = jnp.where (L < 1., 1. - L, smallest_float32)   # avoid NaN gradient at zero
@@ -94,8 +105,9 @@ def smallTimeTransitionMatrix (t, indelParams, /, **kwargs):
     mx = jnp.array ([[a,b,1-a-b],
                      [u*L/one_minus_L,1-(b+q*(1-M)/M)*L/one_minus_L,(b+q*(1-M)/M-u)*L/one_minus_L],
                      [(1-a-u)*M/one_minus_M,q,1-q-(1-a-u)*M/one_minus_M]])
-    mx = jnp.maximum (0, mx)
-    mx = mx / jnp.sum (mx, axis=-1, keepdims=True)
+    if kwargs.get('norm',True):
+        mx = jnp.maximum (0, mx)
+        mx = mx / jnp.sum (mx, axis=-1, keepdims=True)
     return mx
 
 # get limiting transition matrix for large times

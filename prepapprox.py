@@ -8,7 +8,7 @@ import likelihood
 import approx
 
 if len(sys.argv) != 2:
-    print('Usage: {} model.json'.format(sys.argv[0]))
+    print('Usage: {} model.json >model_prep.json'.format(sys.argv[0]))
     sys.exit(1)
 
 modelFilename = sys.argv[1]
