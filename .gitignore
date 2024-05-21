@@ -1,3 +1,6 @@
 node_modules
 __pycache__
 lambda/*.lambda
+lambda/*.stage
+lambda/*.zip
+
