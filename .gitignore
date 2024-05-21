@@ -1,6 +1,7 @@
 node_modules
 __pycache__
-lambda/*.lambda
-lambda/*.stage
-lambda/*.zip
+aws/*.lambda
+aws/*.s3
+aws/*.stage
+aws/*.zip
 
