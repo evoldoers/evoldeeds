@@ -43,7 +43,7 @@ def subLogLike (alignment, distanceToParent, parentIndex, subRate, rootProb):
         parent = parentIndex[child]
         likelihood = likelihood.at[...,parent,:,:].multiply (jnp.einsum('...ij,...cj->...ci', subMatrix[...,child,:,:], likelihood[...,child,:,:]))
         maxLike = jnp.max(likelihood[...,parent,:,:], axis=-1)  # (*H,C)
-        likelihood = likelihood.at[...,parent,:,:].divide (maxLike[...,None])
+        likelihood = likelihood.at[...,parent,:,:].divide (maxLike[...,None])  # guard against underflow
         logNorm = logNorm + jnp.log(maxLike)
     logNorm = logNorm + jnp.log(jnp.einsum('...ci,...i->...c', likelihood[...,0,:,:], rootProb))  # (*H,C)
     return logNorm
