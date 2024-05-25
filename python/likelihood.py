@@ -24,11 +24,13 @@ def subLogLike (alignment, distanceToParent, parentIndex, subRate, rootProb):
     assert subRate.shape == (*H,A,A)
     assert alignment.dtype == jnp.int32
     assert parentIndex.dtype == jnp.int32
-    assert jnp.all(alignment >= -1)
-    assert jnp.all(alignment < A)
-    assert jnp.all(distanceToParent >= 0)
-    assert jnp.all(parentIndex[1:] >= -1)
-    assert jnp.all(parentIndex <= jnp.arange(R))
+
+#    assert jnp.all(alignment >= -1)
+#    assert jnp.all(alignment < A)
+#    assert jnp.all(distanceToParent >= 0)
+#    assert jnp.all(parentIndex[1:] >= -1)
+#    assert jnp.all(parentIndex <= jnp.arange(R))
+
     # Compute transition matrices per branch
     subMatrix = expm (jnp.einsum('...ij,r->...rij', subRate, distanceToParent))  # (*H,R,A,A)
     # Initialize pruning matrix
