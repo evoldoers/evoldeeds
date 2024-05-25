@@ -28,6 +28,7 @@ seqs, nodeName, distanceToParent, parentIndex, transCounts = cigartree.getHMMSum
 def loss (params):
     subRate = params['subrate']
     rootProb = params['rootprob']
+    subRate, rootProb = likelihood.normalizeSubModel (subRate, rootProb)
     return -jnp.sum (likelihood.subLogLike (seqs, distanceToParent, parentIndex, subRate, rootProb))
 
 loss_value_and_grad = jax.value_and_grad (loss)
