@@ -2,6 +2,14 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import expm
 
+def alignmentIsValid (alignment, alphabetSize):
+    assert jnp.all(alignment >= -1)
+    assert jnp.all(alignment < alphabetSize)
+
+def treeIsValid (distanceToParent, parentIndex, alignmentRows):
+    assert jnp.all(distanceToParent >= 0)
+    assert jnp.all(parentIndex[1:] >= -1)
+    assert jnp.all(parentIndex <= jnp.arange(alignmentRows))
 
 # Compute substitution log-likelihood of a multiple sequence alignment and phylogenetic tree by pruning
 # Parameters:
@@ -14,25 +22,45 @@ from jax.scipy.linalg import expm
 # To pad columns, set alignment[paddingRow,paddingCol:] = -1
 
 def subLogLike (alignment, distanceToParent, parentIndex, subRate, rootProb):
-    assert alignment.ndim == 2
+    subMatrix = computeSubMatrixForBranchLengths (distanceToParent, subRate)
+    return subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb)
+
+def computeSubMatrixForBranchLengths (distanceToParent, subRate):
+    assert distanceToParent.ndim == 1
     assert subRate.ndim >= 2
-    R, C = alignment.shape
+    R, = distanceToParent.shape
     *H, A = subRate.shape[0:-1]
-    assert distanceToParent.shape == (R,)
-    assert parentIndex.shape == (R,)
-    assert rootProb.shape == (*H,A)
     assert subRate.shape == (*H,A,A)
-    assert alignment.dtype == jnp.int32
-    assert parentIndex.dtype == jnp.int32
-
-#    assert jnp.all(alignment >= -1)
-#    assert jnp.all(alignment < A)
-#    assert jnp.all(distanceToParent >= 0)
-#    assert jnp.all(parentIndex[1:] >= -1)
-#    assert jnp.all(parentIndex <= jnp.arange(R))
-
     # Compute transition matrices per branch
     subMatrix = expm (jnp.einsum('...ij,r->...rij', subRate, distanceToParent))  # (*H,R,A,A)
+    return subMatrix
+
+defaultDiscretizationParams = (1e-3, 10, 400)  # tMin, tMax, nSteps
+def computeSubMatrixForDiscretizedTimes (subRate, discretizationParams=defaultDiscretizationParams):
+    t = jnp.concat ([jnp.array([0]), jnp.geomspace (*discretizationParams)])
+    discreteTimeSubMatrix = computeSubMatrixForBranchLengths (t, subRate)  # (*H,T,A,A)
+    return discreteTimeSubMatrix
+
+def discretizeBranchLength (t, discretizationParams=defaultDiscretizationParams):
+    tMin, tMax, nSteps = discretizationParams
+    return jnp.where (t == 0,
+                      0,
+                      1 + jnp.digitize (jnp.clip (t, tMin, tMax), jnp.geomspace (tMin, tMax, nSteps)))
+
+def computeSubMatrixForDiscretizedBranchLengths (t, discreteTimeSubMatrix, discretizationParams=defaultDiscretizationParams):
+    subMatrix = discreteTimeSubMatrix[...,discretizeBranchLength(t),:,:]  # (*H,R,A,A)
+    return subMatrix
+
+def subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb):
+    assert alignment.ndim == 2
+    assert subMatrix.ndim >= 3
+    *H, R, A = subMatrix.shape[0:-1]
+    C = alignment.shape[-1]
+    assert parentIndex.shape == (R,)
+    assert rootProb.shape == (*H,A)
+    assert subMatrix.shape == (*H,R,A,A)
+    assert alignment.dtype == jnp.int32
+    assert parentIndex.dtype == jnp.int32
     # Initialize pruning matrix
     tokenLookup = jnp.concatenate([jnp.ones(A)[None,:],jnp.eye(A)])
     likelihood = tokenLookup[alignment + 1]  # (R,C,A)
