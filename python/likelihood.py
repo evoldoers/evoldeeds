@@ -78,12 +78,10 @@ def subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb):
     logNorm = logNorm + jnp.log(jnp.einsum('...ci,...i->...c', likelihood[...,0,:,:], rootProb))  # (*H,C)
     return logNorm
 
-def padDimension (unpaddedVal, multiplier):
-    if multiplier == 2:  # avoid doubling length due to precision errors
-        paddedVal = 1 << (unpaddedVal-1).bit_length()
-    else:
-        paddedVal = int (np.ceil (multiplier ** np.ceil (np.log(unpaddedVal) / np.log(multiplier))))
-    return paddedVal
+def padDimension (len, multiplier):
+    return jnp.where (multiplier == 2,  # handle this case specially to avoid precision errors
+                      1 << (len-1).bit_length(),
+                      int (jnp.ceil (multiplier ** jnp.ceil (jnp.log(len) / jnp.log(multiplier)))))
 
 def padAlignment (alignment, distanceToParent, parentIndex, nRows: int = None, nCols: int = None, colMultiplier = 2, rowMultiplier = 2):
     unpaddedRows, unpaddedCols = alignment.shape
@@ -101,9 +99,32 @@ def padAlignment (alignment, distanceToParent, parentIndex, nRows: int = None, n
         alignment = jnp.stack ([alignment, -1*jnp.ones((nRows, nCols - unpaddedCols))], axis=1)
     return alignment, distanceToParent, parentIndex
 
+def normalizeSubRate (subRate):
+    subRate = jnp.abs (subRate)
+    return subRate - jnp.diag(jnp.sum(subRate, axis=-1))
+
+def probsFromLogits (logits):
+    return jax.nn.softmax(logits)
+
+def normalizeRootProb (rootProb):
+    return rootProb / jnp.sum(rootProb)
+
 def normalizeSubModel (subRate, rootProb):
-    subRate = subRate - jnp.diag(jnp.sum(subRate, axis=-1))
-    rootProb = rootProb / jnp.sum(rootProb)
+    return normalizeSubRate(subRate), normalizeRootProb(rootProb)
+
+def parametricSubModel (subRate, rootLogits):
+    return normalizeSubModel(subRate), probsFromLogits(rootLogits)
+
+def reversibleSubRate (symSubRate, rootProb):
+    sqrtRootProb = jnp.sqrt(rootProb)
+    return jnp.einsum('i,...ij,j->...ij', 1/sqrtRootProb, symSubRate, sqrtRootProb)
+
+def symmetrizeSubRate (matrix):
+    return normalizeSubRate (0.5 * (matrix + matrix.swapaxes(-1,-2)))
+
+def parametricReversibleSubModel (subRate, rootLogits):
+    rootProb = probsFromLogits (rootLogits)
+    subRate = reversibleSubRate (symmetrizeSubRate(subRate), rootProb)
     return subRate, rootProb
 
 def parseHistorianParams (params):
