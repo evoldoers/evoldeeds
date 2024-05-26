@@ -74,8 +74,6 @@ def main (modelFile: str,
     # Create loss function
     model_factory = likelihood.parametricReversibleSubModel if reversible else likelihood.parametricSubModel
     loss = dataset.createLossFunction (data, model_factory)
-    loss_value_and_grad = jax.value_and_grad (loss)
-    loss_value_and_grad = jax.jit (loss_value_and_grad)
 
     if check_grads:
         def loss_wrapper (s, r):
@@ -90,6 +88,9 @@ def main (modelFile: str,
 
     # Training loop
     if train:
+        loss_value_and_grad = jax.value_and_grad (loss)
+        loss_value_and_grad = jax.jit (loss_value_and_grad)
+
         optimizer = optax.adam(init_lr)
         opt_state = optimizer.init(params)
 
@@ -109,7 +110,8 @@ def main (modelFile: str,
         subRate, rootProb = model_factory (params['subrate'], params['root'])
         print (json.dumps (likelihood.toHistorianParams (alphabet, [(subRate, rootProb)], indelParams)))
     else:
-        ll = loss(params)
+        loss_jit = jax.jit(loss)
+        ll = loss_jit(params)
         print("Loss (negative log-likelihood): %f" % ll)
 
 
