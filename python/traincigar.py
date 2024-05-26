@@ -24,6 +24,7 @@ def main (modelFile: str,
           init_lr: float = 1e-3,
           max_iter: int = 1000,
           min_inc: float = 1e-6,
+          patience: int = 10,
           show_grads: bool = False,
           check_grads: bool = False,
           ):
@@ -94,7 +95,9 @@ def main (modelFile: str,
         optimizer = optax.adam(init_lr)
         opt_state = optimizer.init(params)
 
-        prev_ll = None
+        best_ll = None
+        best_params = params
+        patience_counter = 0
         for iter in range(max_iter):
             ll, grads = loss_value_and_grad (params)
             updates, opt_state = optimizer.update(grads, opt_state)
@@ -102,12 +105,19 @@ def main (modelFile: str,
             print ("Iteration %d: loss %f" % (iter+1,ll))
             if show_grads:
                 print (alphabet, grads)
-            if prev_ll is not None and (prev_ll - ll) / abs(prev_ll) < min_inc:
-                break
-            prev_ll = ll
+            inc = (best_ll - ll) / abs(best_ll) if best_ll is not None else 1
+            if best_ll is None or ll > best_ll:
+                best_params = params
+                best_ll = ll
+            if inc >= min_inc:
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    break
 
         # Convert back to historian format, and output
-        subRate, rootProb = model_factory (params['subrate'], params['root'])
+        subRate, rootProb = model_factory (best_params['subrate'], best_params['root'])
         print (json.dumps (likelihood.toHistorianParams (alphabet, [(subRate, rootProb)], indelParams)))
     else:
         loss_jit = jax.jit(loss)
