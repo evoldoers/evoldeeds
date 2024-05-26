@@ -6,48 +6,57 @@ import jax.numpy as jnp
 
 import cigartree
 import likelihood
+import dataset
 
-def main (treeFilename: str,
-          alignFilename: str,
-          modelFilename: str,
-          discretize: bool = False,
+def main (modelFile: str,
+          treeFile: str = None,
+          alignFile: str = None,
+          dataDir: str = None,
+          families: str = None,
+          familiesFile: str = None,
           ):
     """
     Compute derivatives of log-likelihood for tree, alignment, and model.
     
     Args:
-        treeFilename: Newick tree file
-        alignFilename: FASTA alignment file
-        modelFilename: Historian-format JSON file with model parameters
+        modelFile: Historian-format JSON file with model parameters
+        treeFile: Newick tree file
+        alignFile: FASTA alignment file
+        dataDir: Directory with tree and alignment files (suffices .nh and .aa.fasta)
+        families: Comma-separated list of families
+        familiesFile: File with list of families, one per line
         discretize: Discretize branch lengths
     """
 
-    with open(treeFilename, 'r') as f:
-        treeStr = f.read()
-    with open(alignFilename, 'r') as f:
-        alignStr = f.read()
-    with open(modelFilename, 'r') as f:
+    # Read model and alphabet
+    with open(modelFile, 'r') as f:
         modelJson = json.load (f)
-
-    ct = cigartree.makeCigarTree (treeStr, alignStr)
-
     alphabet, mixture, _indelParams = likelihood.parseHistorianParams (modelJson)
-    seqs, _nodeName, distanceToParent, parentIndex, _transCounts = cigartree.getHMMSummaries (treeStr, alignStr, alphabet)
 
-    def loss (params):
-        subRate = params['subrate']
-        rootProb = params['rootprob']
-        subRate, rootProb = likelihood.normalizeSubModel (subRate, rootProb)
-        if discretize:
-            discSubMatrix = likelihood.computeSubMatrixForDiscretizedTimes (subRate)
-            subMatrix = likelihood.computeSubMatrixForDiscretizedBranchLengths (distanceToParent, discSubMatrix)
-            subll = likelihood.subLogLikeForMatrices (seqs, parentIndex, subMatrix, rootProb)
+    # Create dataset
+    if dataDir is not None:
+        if families is not None:
+            families = families.split(',')
+        elif familiesFile is not None:
+            with open(familiesFile, 'r') as f:
+                families = [line.strip() for line in f]
         else:
-            subll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, subRate, rootProb)
-        return -jnp.sum (subll)
+            raise ValueError ('Either families or familiesFile must be specified')
+        alphabet = likelihood.getAlphabetFromModel (modelFile)
+        dataset = list (dataset.loadMultipleTreesAndAlignments (dataDir, dataDir, alphabet, families))
+    else:
+        seqs, parentIndex, distanceToParent = dataset.loadTreeAndAlignment (treeFile, alignFile, alphabet)
+        dataset = [(seqs, parentIndex, distanceToParent)]
 
+    # Create loss function
+    loss = dataset.createLossFunction (dataset)
     loss_value_and_grad = jax.value_and_grad (loss)
     loss_value_and_grad = jax.jit (loss_value_and_grad)
+
+    # TODO:
+    # Use a parameterization that guarantees rates and probabilities in correct domain
+    # Add an optimizer
+    # Print out final parameterization
 
     params = {'subrate': mixture[0][0], 'rootprob': mixture[0][1]}
 
