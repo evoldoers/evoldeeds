@@ -7,9 +7,9 @@ import cigartree
 import likelihood
 import h20
 
-def main (treeFilename: str,
+def main (modelFilename: str,
+          treeFilename: str,
           alignFilename: str,
-          modelFilename: str,
           discretize: bool = False,
           ):
     """
@@ -21,17 +21,17 @@ def main (treeFilename: str,
         modelFilename: Historian-format JSON file with model parameters
         discretize: Discretize branch lengths
     """
+    with open(modelFilename, 'r') as f:
+        modelJson = json.load (f)
     with open(treeFilename, 'r') as f:
         treeStr = f.read()
     with open(alignFilename, 'r') as f:
         alignStr = f.read()
-    with open(modelFilename, 'r') as f:
-        modelJson = json.load (f)
 
     ct = cigartree.makeCigarTree (treeStr, alignStr)
 
     alphabet, mixture, indelParams = likelihood.parseHistorianParams (modelJson)
-    seqs, nodeName, distanceToParent, parentIndex, transCounts = cigartree.getHMMSummaries (treeStr, alignStr, alphabet)
+    seqs, _nodeName, distanceToParent, parentIndex, transCounts = cigartree.getHMMSummaries (treeStr, alignStr, alphabet)
 
     subRate, rootProb = mixture[0]
     if discretize:

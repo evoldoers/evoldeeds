@@ -36,8 +36,11 @@ def computeSubMatrixForBranchLengths (distanceToParent, subRate):
     return subMatrix
 
 defaultDiscretizationParams = (1e-3, 10, 400)  # tMin, tMax, nSteps
+def getDiscretizedTimes (discretizationParams=defaultDiscretizationParams):
+    return jnp.concat ([jnp.array([0]), jnp.geomspace (*discretizationParams)])
+
 def computeSubMatrixForDiscretizedTimes (subRate, discretizationParams=defaultDiscretizationParams):
-    t = jnp.concat ([jnp.array([0]), jnp.geomspace (*discretizationParams)])
+    t = getDiscretizedTimes (discretizationParams)
     discreteTimeSubMatrix = computeSubMatrixForBranchLengths (t, subRate)  # (*H,T,A,A)
     return discreteTimeSubMatrix
 
@@ -83,7 +86,7 @@ def padDimension (len, multiplier):
                       1 << (len-1).bit_length(),
                       int (jnp.ceil (multiplier ** jnp.ceil (jnp.log(len) / jnp.log(multiplier)))))
 
-def padAlignment (alignment, distanceToParent, parentIndex, nRows: int = None, nCols: int = None, colMultiplier = 2, rowMultiplier = 2):
+def padAlignment (alignment, parentIndex, distanceToParent, nRows: int = None, nCols: int = None, colMultiplier = 2, rowMultiplier = 2):
     unpaddedRows, unpaddedCols = alignment.shape
     if nCols is None:
         nCols = padDimension (unpaddedCols, colMultiplier)
@@ -91,13 +94,13 @@ def padAlignment (alignment, distanceToParent, parentIndex, nRows: int = None, n
         nRows = padDimension (unpaddedRows, rowMultiplier)
     # To pad rows, set parentIndex[paddingRow:] = arange(paddingRow,R) and pad alignment and distanceToParent with any value (-1 and 0 for predictability)
     if nRows > unpaddedRows:
-        alignment = jnp.stack ([alignment, -1*jnp.ones((nRows - unpaddedRows, unpaddedCols))], axis=0)
-        distanceToParent = jnp.stack ([distanceToParent, jnp.zeros(nRows - unpaddedRows)], axis=0)
-        parentIndex = jnp.stack ([parentIndex, jnp.arange(unpaddedRows,nRows)], axis=0)
+        alignment = jnp.concatenate ([alignment, -1*jnp.ones((nRows - unpaddedRows, unpaddedCols), dtype=alignment.dtype)], axis=0)
+        distanceToParent = jnp.concatenate ([distanceToParent, jnp.zeros(nRows - unpaddedRows, dtype=distanceToParent.dtype)], axis=0)
+        parentIndex = jnp.concatenate ([parentIndex, jnp.arange(unpaddedRows,nRows, dtype=parentIndex.dtype)], axis=0)
     # To pad columns, set alignment[paddingRow,paddingCol:] = -1
     if nCols > unpaddedCols:
-        alignment = jnp.stack ([alignment, -1*jnp.ones((nRows, nCols - unpaddedCols))], axis=1)
-    return alignment, distanceToParent, parentIndex
+        alignment = jnp.concatenate ([alignment, -1*jnp.ones((nRows, nCols - unpaddedCols), dtype=alignment.dtype)], axis=1)
+    return alignment, parentIndex, distanceToParent
 
 def normalizeSubRate (subRate):
     subRate = jnp.abs (subRate)
@@ -113,7 +116,7 @@ def normalizeSubModel (subRate, rootProb):
     return normalizeSubRate(subRate), normalizeRootProb(rootProb)
 
 def parametricSubModel (subRate, rootLogits):
-    return normalizeSubModel(subRate), probsFromLogits(rootLogits)
+    return normalizeSubRate(subRate), probsFromLogits(rootLogits)
 
 def reversibleSubRate (symSubRate, rootProb):
     sqrtRootProb = jnp.sqrt(rootProb)
@@ -140,3 +143,12 @@ def parseHistorianParams (params):
         mixture = [parseSubRate(params)]
     indelParams = tuple(params.get(name,0) for name in ['insrate','delrate','insextprob','delextprob'])
     return alphabet, mixture, indelParams
+
+def toHistorianParams (alphabet, mixture, indelParams):
+    def toSubRate (subRate, rootProb):
+        return { 'subrate': {alphabet[i]: {alphabet[j]: float(subRate[i,j]) for j in range(len(alphabet)) if i != j} for i in range(len(alphabet))},
+                 'rootprob': {alphabet[i]: float(rootProb[i]) for i in range(len(alphabet))} }
+    if len(mixture) == 1:
+        return toSubRate(*mixture[0]), {name: float(param) for name,param in zip(['insrate','delrate','insextprob','delextprob'],indelParams)}
+    else:
+        return {'mixture': [toSubRate(*m) for m in mixture]}, {name: float(param) for name,param in zip(['insrate','delrate','insextprob','delextprob'],indelParams)}
