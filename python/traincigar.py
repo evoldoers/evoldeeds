@@ -1,5 +1,4 @@
 import json
-import jax.test_util
 from jsonargparse import CLI
 
 import jax
@@ -26,7 +25,6 @@ def main (modelFile: str,
           min_inc: float = 1e-6,
           patience: int = 10,
           show_grads: bool = False,
-          check_grads: bool = False,
           ):
     """
     Compute derivatives of log-likelihood for tree, alignment, and model.
@@ -45,15 +43,30 @@ def main (modelFile: str,
         max_iter: Maximum number of iterations
         min_inc: Minimum fractional increase in log-likelihood
         show_grads: Show gradients
-        check_grads: Check gradients
     """
 
     # Read model and alphabet
     with open(modelFile, 'r') as f:
         modelJson = json.load (f)
     alphabet, mixture, indelParams = likelihood.parseHistorianParams (modelJson)
-    mixture = [(subRate, jnp.log(rootProb)) for subRate, rootProb in mixture]
 
+    # Convert rates and probabilities to exchangeabilities and logits
+    if reversible:
+        mixture = [(likelihood.zeroDiagonal(likelihood.subMatrixToExchangeabilityMatrix(subRate,rootProb)),
+                    likelihood.probsToLogits(rootProb)) for subRate, rootProb in mixture]
+    else:
+        mixture = [(likelihood.zeroDiagonal(subRate),
+                    likelihood.probsToLogits(rootProb)) for subRate, rootProb in mixture]
+    indelParams = likelihood.indelModelToParams (*indelParams)
+
+    # For now, only one mixture component is supported
+    # As a more general solution that is a superset of Historian's model, we would like...
+    #            familyType ~ Categorical(familyMixtureWeights)
+    #           indelParams = indelParams[familyType]
+    #  columnMixtureWeights = columnMixtureWeights[familyType]
+    #            columnType ~ Categorical(columnMixtureWeights)
+    #     subRate, rootProb = subRateRootProb[columnType]
+    # We will need a JSON format for this that is ideally backward-compatible with Historian
     assert len(mixture) == 1, "Only one mixture component is supported for substitution model"
 
     # Create dataset
@@ -67,25 +80,19 @@ def main (modelFile: str,
             logging.warning("Warning: no family list specified; using all families in %s" % dataDir)
         data = list (dataset.loadTreeFamData (dataDir, alphabet, families=families, limit=limitFamilies))
     elif treeFile is not None and alignFile is not None:
-        seqs, parentIndex, distanceToParent = dataset.loadTreeAndAlignment (treeFile, alignFile, alphabet)
-        data = [(seqs, parentIndex, distanceToParent)]
+        data = [dataset.loadTreeAndAlignment (treeFile, alignFile, alphabet)]
     else:
         raise ValueError ('Either dataDir, or both treeFile and alignFile, must be specified')
 
     # Create loss function
-    model_factory = likelihood.parametricReversibleSubModel if reversible else likelihood.parametricSubModel
-    loss = dataset.createLossFunction (data, model_factory)
-
-    if check_grads:
-        def loss_wrapper (s, r):
-            return loss ({ 'subrate': s, 'root': r })
-        logging.warning("Checking gradients...")
-        jax.test_util.check_grads(loss_wrapper, mixture[0], order=1)
-        logging.warning("Gradients OK")
+    sub_model_factory = likelihood.parametricReversibleSubModel if reversible else likelihood.parametricSubModel
+    ggi_model_factory = likelihood.createGGIModelFactory (sub_model_factory)
+    loss = dataset.createLossFunction (data, ggi_model_factory, alphabet)
 
     # Initialize parameters of the model + optimizer.
     params = { 'subrate': mixture[0][0],
-               'root': mixture[0][1] }
+               'root': mixture[0][1],
+               'indels': indelParams }
 
     # Training loop
     if train:
@@ -117,7 +124,7 @@ def main (modelFile: str,
                     break
 
         # Convert back to historian format, and output
-        subRate, rootProb = model_factory (best_params['subrate'], best_params['root'])
+        subRate, rootProb, indelParams = ggi_model_factory (best_params)
         print (json.dumps (likelihood.toHistorianParams (alphabet, [(subRate, rootProb)], indelParams)))
     else:
         loss_jit = jax.jit(loss)

@@ -2,6 +2,8 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import expm
 
+import h20
+
 def alignmentIsValid (alignment, alphabetSize):
     assert jnp.all(alignment >= -1)
     assert jnp.all(alignment < alphabetSize)
@@ -50,9 +52,34 @@ def discretizeBranchLength (t, discretizationParams=defaultDiscretizationParams)
                       0,
                       1 + jnp.digitize (jnp.clip (t, tMin, tMax), jnp.geomspace (tMin, tMax, nSteps)))
 
-def computeSubMatrixForDiscretizedBranchLengths (t, discreteTimeSubMatrix, discretizationParams=defaultDiscretizationParams):
-    subMatrix = discreteTimeSubMatrix[...,discretizeBranchLength(t),:,:]  # (*H,R,A,A)
+def getSubMatrixForDiscretizedBranchLengths (discretizedTimes, discreteTimeSubMatrix):
+    subMatrix = discreteTimeSubMatrix[...,discretizedTimes,:,:]  # (*H,R,A,A)
     return subMatrix
+
+def logTransMat (transMat):
+    return jnp.log (jnp.maximum (transMat, h20.smallest_float32))
+
+def logRootTransMat():
+    return logTransMat (h20.dummyRootTransitionMatrix())
+
+def computeTransMatForDiscretizedTimes (indelParams, alphabet, discretizationParams=defaultDiscretizationParams):
+    td = getDiscretizedTimes (discretizationParams)
+    transMat = h20.transitionMatrixForMonotonicTimes(td,indelParams,alphabetSize=len(alphabet))
+    #transMat = h20.transitionMatrixForTimes(td,indelParams,alphabetSize=len(alphabet))
+    return logTransMat (transMat)
+
+def getTransMatForDiscretizedTimes (discretizedTimes, discreteTimeTransMat):
+    assert discreteTimeTransMat.ndim >= 3
+    assert len(discretizedTimes) > 1
+    branches = discreteTimeTransMat[...,discretizedTimes[1:],:,:]  # (...categories...,T-1,A,A)
+    root = logRootTransMat() * jnp.ones_like(branches[...,0:1,:,:])  # (...categories...,1,A,A)
+    return jnp.concatenate ([root, branches], axis=-3)
+
+def transLogLikeForTransMats (transCounts, transMats):
+    assert transCounts.shape == transMats.shape, "transCounts.shape = %s, transMats.shape = %s" % (transCounts.shape, transMats.shape)  # (...categories...,T,A,A)
+    trans_ll = transCounts * transMats
+    trans_ll = jnp.sum (trans_ll, axis=(-1,-2))
+    return trans_ll  # (...categories...,rows)
 
 def subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb, maxChunkSize = 128):
     assert alignment.ndim == 2
@@ -90,28 +117,42 @@ def padDimension (len, multiplier):
                       1 << (len-1).bit_length(),
                       int (jnp.ceil (multiplier ** jnp.ceil (jnp.log(len) / jnp.log(multiplier)))))
 
-def padAlignment (alignment, parentIndex, distanceToParent, nRows: int = None, nCols: int = None, colMultiplier = 2, rowMultiplier = 2):
+def padAlignment (alignment, parentIndex, distanceToParent, transCounts, nRows: int = None, nCols: int = None, colMultiplier = 2, rowMultiplier = 2):
     unpaddedRows, unpaddedCols = alignment.shape
     if nCols is None:
         nCols = padDimension (unpaddedCols, colMultiplier)
     if nRows is None:
         nRows = padDimension (unpaddedRows, rowMultiplier)
-    # To pad rows, set parentIndex[paddingRow:] = arange(paddingRow,R) and pad alignment and distanceToParent with any value (-1 and 0 for predictability)
+    # To pad rows, set parentIndex[paddingRow:] = arange(paddingRow,R) and pad alignment and distanceToParent with any value (-1 and 0 for predictability),
+    # and pad transCounts with zeros
     if nRows > unpaddedRows:
         alignment = jnp.concatenate ([alignment, -1*jnp.ones((nRows - unpaddedRows, unpaddedCols), dtype=alignment.dtype)], axis=0)
         distanceToParent = jnp.concatenate ([distanceToParent, jnp.zeros(nRows - unpaddedRows, dtype=distanceToParent.dtype)], axis=0)
         parentIndex = jnp.concatenate ([parentIndex, jnp.arange(unpaddedRows,nRows, dtype=parentIndex.dtype)], axis=0)
+        transCounts = jnp.concatenate ([transCounts, jnp.zeros((nRows - unpaddedRows, *transCounts.shape[1:]), dtype=transCounts.dtype)], axis=0)
     # To pad columns, set alignment[paddingRow,paddingCol:] = -1
     if nCols > unpaddedCols:
         alignment = jnp.concatenate ([alignment, -1*jnp.ones((nRows, nCols - unpaddedCols), dtype=alignment.dtype)], axis=1)
-    return alignment, parentIndex, distanceToParent
+    return alignment, parentIndex, distanceToParent, transCounts
 
 def normalizeSubRate (subRate):
     subRate = jnp.abs (subRate)
     return subRate - jnp.diag(jnp.sum(subRate, axis=-1))
 
-def probsFromLogits (logits):
+def zeroDiagonal (matrix):
+    return matrix - jnp.diag(jnp.diag(matrix))
+
+def logitsToProbs (logits):
     return jax.nn.softmax(logits)
+
+def probsToLogits (probs):
+    return jnp.log (probs)
+
+def logitToProb (logit):
+    return 1 / (1 + jnp.exp (logit))
+
+def probToLogit (prob):
+    return jnp.log (1/prob - 1)
 
 def normalizeRootProb (rootProb):
     return rootProb / jnp.sum(rootProb)
@@ -120,19 +161,36 @@ def normalizeSubModel (subRate, rootProb):
     return normalizeSubRate(subRate), normalizeRootProb(rootProb)
 
 def parametricSubModel (subRate, rootLogits):
-    return normalizeSubRate(subRate), probsFromLogits(rootLogits)
+    return normalizeSubRate(subRate), logitsToProbs(rootLogits)
 
-def reversibleSubRate (symSubRate, rootProb):
+def exchangeabilityMatrixToSubMatrix (exchangeRate, rootProb):
     sqrtRootProb = jnp.sqrt(rootProb)
-    return jnp.einsum('i,...ij,j->...ij', 1/sqrtRootProb, symSubRate, sqrtRootProb)
+    return jnp.einsum('i,...ij,j->...ij', 1/sqrtRootProb, exchangeRate, sqrtRootProb)
+
+def subMatrixToExchangeabilityMatrix (subMatrix, rootProb):
+    sqrtRootProb = jnp.sqrt(rootProb)
+    return jnp.einsum('i,...ij,j->...ij', sqrtRootProb, subMatrix, 1/sqrtRootProb)
 
 def symmetrizeSubRate (matrix):
     return normalizeSubRate (0.5 * (matrix + matrix.swapaxes(-1,-2)))
 
 def parametricReversibleSubModel (subRate, rootLogits):
-    rootProb = probsFromLogits (rootLogits)
-    subRate = reversibleSubRate (symmetrizeSubRate(subRate), rootProb)
+    rootProb = logitsToProbs (rootLogits)
+    subRate = exchangeabilityMatrixToSubMatrix (symmetrizeSubRate(subRate), rootProb)
     return subRate, rootProb
+
+def parametricIndelModel (lam, mu, x_logits, y_logits):
+    return jnp.abs(lam), jnp.abs(mu), logitToProb(x_logits), logitToProb(y_logits)
+
+def indelModelToParams (lam, mu, x, y):
+    return lam, mu, probToLogit(x), probToLogit(y)
+
+def createGGIModelFactory (subModelFactory):
+    def parametricGGIModel (params):
+        subRate, rootProb = subModelFactory (params['subrate'], params['root'])
+        indelParams = parametricIndelModel (*params['indels'])
+        return subRate, rootProb, indelParams
+    return parametricGGIModel
 
 def parseHistorianParams (params):
     alphabet = params['alphabet']

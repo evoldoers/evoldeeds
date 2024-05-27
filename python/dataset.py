@@ -15,15 +15,15 @@ def loadTreeAndAlignment (treeFilename, alignFilename, alphabet):
         alignStr = f.read()
 
     ct = cigartree.makeCigarTree (treeStr, alignStr)
-    seqs, _nodeName, distanceToParent, parentIndex, _transCounts = cigartree.getHMMSummaries (treeStr, alignStr, alphabet)
+    seqs, _nodeName, distanceToParent, parentIndex, transCounts = cigartree.getHMMSummaries (treeStr, alignStr, alphabet)
 
     discretizedDistanceToParent = likelihood.discretizeBranchLength (distanceToParent)
 
     unpaddedRows, unpaddedCols = seqs.shape
-    seqs, parentIndex, discretizedDistanceToParent = likelihood.padAlignment (seqs, parentIndex, discretizedDistanceToParent)
+    seqs, parentIndex, discretizedDistanceToParent, transCounts = likelihood.padAlignment (seqs, parentIndex, discretizedDistanceToParent, transCounts)
     paddedRows, paddedCols = seqs.shape
     logging.warning("Padded alignment %s from %d x %d to %d x %d" % (os.path.basename(alignFilename), unpaddedRows, unpaddedCols, paddedRows, paddedCols))
-    return seqs, parentIndex, discretizedDistanceToParent
+    return seqs, parentIndex, discretizedDistanceToParent, transCounts
 
 def loadMultipleTreesAndAlignments (treeDir, alignDir, alphabet, families = None, limit = None, treeSuffix = '.nh', alignSuffix = '.aa.fasta'):
     if families is not None:
@@ -41,15 +41,18 @@ def loadMultipleTreesAndAlignments (treeDir, alignDir, alphabet, families = None
 def loadTreeFamData (treeFamDir, alphabet, **kwargs):
     return loadMultipleTreesAndAlignments (treeFamDir, treeFamDir, alphabet, **kwargs)
 
-def createLossFunction (dataset, model_factory):
+def createLossFunction (dataset, model_factory, alphabet):
     def loss (params):
-        subRate, rootProb = model_factory (params['subrate'], params['root'])
+        subRate, rootProb, indelParams = model_factory (params)
         discSubMatrix = likelihood.computeSubMatrixForDiscretizedTimes (subRate)
+        discTransMat = likelihood.computeTransMatForDiscretizedTimes (indelParams, alphabet)
         ll = 0.
-        for seqs, parentIndex, discretizedDistanceToParent in dataset:
+        for seqs, parentIndex, discretizedDistanceToParent, transCounts in dataset:
+            trans_ll = likelihood.transLogLikeForTransMats (transCounts,
+                                                            likelihood.getTransMatForDiscretizedTimes (discretizedDistanceToParent, discTransMat))
             sub_ll = likelihood.subLogLikeForMatrices (seqs, parentIndex,
-                                                        discSubMatrix[...,discretizedDistanceToParent,:,:],
-                                                        rootProb)
-            ll = ll - jnp.sum(sub_ll)
+                                                       likelihood.getSubMatrixForDiscretizedBranchLengths (discretizedDistanceToParent, discSubMatrix),
+                                                       rootProb)
+            ll = ll - jnp.sum(sub_ll) - jnp.sum(trans_ll)
         return ll
     return loss

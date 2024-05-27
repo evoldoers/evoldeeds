@@ -36,7 +36,7 @@ def main (modelFilename: str,
     subRate, rootProb = mixture[0]
     if discretize:
         discSubMatrix = likelihood.computeSubMatrixForDiscretizedTimes (subRate)
-        subMatrix = likelihood.computeSubMatrixForDiscretizedBranchLengths (distanceToParent, discSubMatrix)
+        subMatrix = likelihood.getSubMatrixForDiscretizedBranchLengths (distanceToParent, discSubMatrix)
         subll = likelihood.subLogLikeForMatrices (seqs, parentIndex, subMatrix, rootProb)
     else:
         subll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, subRate, rootProb)
