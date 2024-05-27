@@ -41,11 +41,11 @@ def loadMultipleTreesAndAlignments (treeDir, alignDir, alphabet, families = None
 def loadTreeFamData (treeFamDir, alphabet, **kwargs):
     return loadMultipleTreesAndAlignments (treeFamDir, treeFamDir, alphabet, **kwargs)
 
-def createLossFunction (dataset, model_factory, alphabet):
+def createLossFunction (dataset, model_factory, alphabet, useKM03 = False):
     def loss (params):
         subRate, rootProb, indelParams = model_factory (params)
         discSubMatrix = likelihood.computeSubMatrixForDiscretizedTimes (subRate)
-        discTransMat = likelihood.computeTransMatForDiscretizedTimes (indelParams, alphabet)
+        discTransMat = likelihood.computeTransMatForDiscretizedTimes (indelParams, alphabet, useKM03=useKM03)
         ll = 0.
         for seqs, parentIndex, discretizedDistanceToParent, transCounts in dataset:
             trans_ll = likelihood.transLogLikeForTransMats (transCounts,

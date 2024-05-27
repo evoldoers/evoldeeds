@@ -3,6 +3,7 @@ import jax.numpy as jnp
 from jax.scipy.linalg import expm
 
 import h20
+import km03
 
 def alignmentIsValid (alignment, alphabetSize):
     assert jnp.all(alignment >= -1)
@@ -62,10 +63,12 @@ def logTransMat (transMat):
 def logRootTransMat():
     return logTransMat (h20.dummyRootTransitionMatrix())
 
-def computeTransMatForDiscretizedTimes (indelParams, alphabet, discretizationParams=defaultDiscretizationParams):
+def computeTransMatForDiscretizedTimes (indelParams, alphabet, discretizationParams=defaultDiscretizationParams, useKM03=False):
     td = getDiscretizedTimes (discretizationParams)
-    transMat = h20.transitionMatrixForMonotonicTimes(td,indelParams,alphabetSize=len(alphabet))
-    #transMat = h20.transitionMatrixForTimes(td,indelParams,alphabetSize=len(alphabet))
+    if useKM03:
+        transMat = h20.transitionMatrixForTimes(td,indelParams,alphabetSize=len(alphabet),transitionMatrix=km03.transitionMatrix)
+    else:
+        transMat = h20.transitionMatrixForMonotonicTimes(td,indelParams,alphabetSize=len(alphabet))
     return logTransMat (transMat)
 
 def getTransMatForDiscretizedTimes (discretizedTimes, discreteTimeTransMat):

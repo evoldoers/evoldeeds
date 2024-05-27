@@ -138,7 +138,7 @@ def transitionMatrix (t, indelParams, /, alphabetSize=20, **kwargs):
                       zeroTimeTransitionMatrix(indelParams))
 
 # get transition matrix for a range of times, recomputing counts for each timepoint
-def transitionMatrixForTimes (ts, indelParams, /, alphabetSize=20, **kwargs):
+def transitionMatrixForTimes (ts, indelParams, /, alphabetSize=20, transitionMatrix=transitionMatrix, **kwargs):
     return jnp.stack ([transitionMatrix(t,indelParams,**kwargs) for t in ts], axis=0)
 
 # get transition matrix for a monotonically increasing range of times, re-using counts

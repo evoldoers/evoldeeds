@@ -19,6 +19,7 @@ def main (modelFile: str,
           familiesFile: str = None,
           limitFamilies: int = None,
           reversible: bool = False,
+          km03: bool = False,
           train: bool = True,
           init_lr: float = 1e-3,
           max_iter: int = 1000,
@@ -38,6 +39,7 @@ def main (modelFile: str,
         familiesFile: File with list of families, one per line
         limitFamilies: Limit number of families
         reversible: Use reversible model
+        km03: Use Knudsen-Miyamoto (2003) approximation to GGI model, rather than Holmes (2020)
         train: Train model
         init_lr: Initial learning rate
         max_iter: Maximum number of iterations
@@ -57,6 +59,7 @@ def main (modelFile: str,
     else:
         mixture = [(likelihood.zeroDiagonal(subRate),
                     likelihood.probsToLogits(rootProb)) for subRate, rootProb in mixture]
+
     indelParams = likelihood.indelModelToParams (*indelParams)
 
     # For now, only one mixture component is supported
@@ -87,7 +90,7 @@ def main (modelFile: str,
     # Create loss function
     sub_model_factory = likelihood.parametricReversibleSubModel if reversible else likelihood.parametricSubModel
     ggi_model_factory = likelihood.createGGIModelFactory (sub_model_factory)
-    loss = dataset.createLossFunction (data, ggi_model_factory, alphabet)
+    loss = dataset.createLossFunction (data, ggi_model_factory, alphabet, useKM03=km03)
 
     # Initialize parameters of the model + optimizer.
     params = { 'subrate': mixture[0][0],
