@@ -66,7 +66,7 @@ def createLossFunction (dataset, model_factory, alphabet, includeSubs = True, in
     return lambda params: subLoss(params) + indelLoss(params)
 
 # BUG WARNING: NOT discretizing the indel loss appears to cause NaNs after one round of training
-def createIndelLossFunction (dataset, model_factory, alphabet, discretize = True, useKM03 = False):
+def createIndelLossFunction (dataset, model_factory, alphabet, discretize = False, useKM03 = False):
     def loss (params):
         _subRate, _rootProb, indelParams = model_factory (params)
         if discretize:
