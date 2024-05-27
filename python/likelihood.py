@@ -66,7 +66,7 @@ def subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb, maxChunk
     assert parentIndex.dtype == jnp.int32
     # If too big, split into chunks
     if C > maxChunkSize:
-        jax.debug.print('Splitting %d x %d alignment into %d chunks of size %d x %d' % (R,C,C//maxChunkSize,R,maxChunkSize))
+#        jax.debug.print('Splitting %d x %d alignment into %d chunks of size %d x %d' % (R,C,C//maxChunkSize,R,maxChunkSize))
         return jnp.concatenate ([subLogLikeForMatrices (alignment[:,i:i+maxChunkSize], parentIndex, subMatrix, rootProb) for i in range(0,C,maxChunkSize)], axis=-1)
     # Initialize pruning matrix
     tokenLookup = jnp.concatenate([jnp.ones(A)[None,:],jnp.eye(A)])
