@@ -19,7 +19,10 @@ def loadTreeAndAlignment (treeFilename, alignFilename, alphabet):
 
     discretizedDistanceToParent = likelihood.discretizeBranchLength (distanceToParent)
 
+    unpaddedRows, unpaddedCols = seqs.shape
     seqs, parentIndex, discretizedDistanceToParent = likelihood.padAlignment (seqs, parentIndex, discretizedDistanceToParent)
+    paddedRows, paddedCols = seqs.shape
+    logging.warning("Padded alignment %s from %d x %d to %d x %d" % (os.path.basename(alignFilename), unpaddedRows, unpaddedCols, paddedRows, paddedCols))
     return seqs, parentIndex, discretizedDistanceToParent
 
 def loadMultipleTreesAndAlignments (treeDir, alignDir, alphabet, families = None, limit = None, treeSuffix = '.nh', alignSuffix = '.aa.fasta'):

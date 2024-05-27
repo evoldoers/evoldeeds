@@ -54,7 +54,7 @@ def computeSubMatrixForDiscretizedBranchLengths (t, discreteTimeSubMatrix, discr
     subMatrix = discreteTimeSubMatrix[...,discretizeBranchLength(t),:,:]  # (*H,R,A,A)
     return subMatrix
 
-def subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb):
+def subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb, maxChunkSize = 128):
     assert alignment.ndim == 2
     assert subMatrix.ndim >= 3
     *H, R, A = subMatrix.shape[0:-1]
@@ -64,6 +64,10 @@ def subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb):
     assert subMatrix.shape == (*H,R,A,A)
     assert alignment.dtype == jnp.int32
     assert parentIndex.dtype == jnp.int32
+    # If too big, split into chunks
+    if C > maxChunkSize:
+        jax.debug.print('Splitting %d x %d alignment into %d chunks of size %d x %d' % (R,C,C//maxChunkSize,R,maxChunkSize))
+        return jnp.concatenate ([subLogLikeForMatrices (alignment[:,i:i+maxChunkSize], parentIndex, subMatrix, rootProb) for i in range(0,C,maxChunkSize)], axis=-1)
     # Initialize pruning matrix
     tokenLookup = jnp.concatenate([jnp.ones(A)[None,:],jnp.eye(A)])
     likelihood = tokenLookup[alignment + 1]  # (R,C,A)
