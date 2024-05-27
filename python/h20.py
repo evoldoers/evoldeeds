@@ -94,7 +94,6 @@ def integrateCounts_diffrax (t, params, /, step = None, rtol = 1e-3, atol = 1e-3
   sol = diffeqsolve (term, solver, 0., t, step, y0, args=params,
                      stepsize_controller=stepsize_controller,
                      saveat = SaveAt(steps=True),
-                     progress_meter=diffrax.TextProgressMeter,
                      **kwargs)
   return sol.ys[-1], jnp.concatenate([jnp.array([y0]),sol.ys],axis=0), jnp.concatenate([jnp.array([0]),sol.ts],axis=0)
 
@@ -112,7 +111,8 @@ def derivs (t, counts, params):
                                  ((S-q*D)*num/denom - q*lam*(D+1)/(1.-y))/D))),
                     jnp.array ((-lam-mu,lam,lam,0.)))
 
-integrateCounts = integrateCounts_diffrax
+#integrateCounts = integrateCounts_diffrax
+integrateCounts = integrateCounts_RK4
 
 # test whether time is past threshold of alignment signal being undetectable
 def alignmentIsProbablyUndetectable (t, indelParams, alphabetSize):
@@ -135,13 +135,14 @@ def zeroTimeTransitionMatrix (indelParams):
 # convert counts (a,b,u,q) to transition matrix ((a,b,c),(f,g,h),(p,q,r))
 def smallTimeTransitionMatrix (t, indelParams, /, **kwargs):
     lam,mu,x,y = indelParams
-    jax.debug.print("t={t}",t=t)
+    jax.debug.print("t={t} lam={lam} mu={mu} x={x} y={y}", t=t, lam=lam, mu=mu, x=x, y=y)
     abuq, _abuq_by_t, _ts = integrateCounts(t,indelParams,**kwargs)
     return transitionMatrixFromCounts (t, indelParams, abuq, **kwargs)
 
 def transitionMatrixFromCounts (t, indelParams, counts, /, **kwargs):
     lam,mu,x,y = indelParams
     a,b,u,q = counts
+    jax.debug.print("t={t} lam={lam} mu={mu} x={x} y={y} a={a} b={b} u={u} q={q}", t=t, lam=lam, mu=mu, x=x, y=y, a=a, b=b, u=u, q=q)
     L = lm(t,lam,x)
     M = lm(t,mu,y)
     one_minus_L = jnp.where (L < 1., 1. - L, smallest_float32)   # avoid NaN gradient at zero
@@ -164,7 +165,7 @@ def largeTimeTransitionMatrix (t, indelParams):
                        [(1-r),0,r]])
 
 # get transition matrix for any given time
-tMin = 1e-6
+tMin = 1e-3
 def transitionMatrix (t, indelParams, /, alphabetSize=20, **kwargs):
     lam,mu,x,y = indelParams
     tSafe = jnp.maximum (t, tMin)

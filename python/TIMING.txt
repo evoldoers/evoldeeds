@@ -22,3 +22,11 @@ Possible strategies:
 We still need to try the cherryML composite likelihood strategy.
 However having a non-glacial reference implementation will be very useful for this.
 So it seems worth fixing this problem first.
+
+Plan:
+A. Get robust indel solver
+ 1. Why/where do we get NaNs when using RK4 integration?
+ 2. Why/where do we get infinite a,b,u,q when using diffrax?
+ 3. What is the fastest strategy for an indel solver? Discretized/not, diffrax/RK4, recurrent/parallel? (We will need this even for cherryML composite likelihood.)
+B. Implement cherryML composite likelihood
+C. Implement mixture model
