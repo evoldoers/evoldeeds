@@ -17,13 +17,13 @@ def loadTreeAndAlignment (treeFilename, alignFilename, alphabet):
     ct = cigartree.makeCigarTree (treeStr, alignStr)
     seqs, _nodeName, distanceToParent, parentIndex, transCounts = cigartree.getHMMSummaries (treeStr, alignStr, alphabet)
 
-    discretizedDistanceToParent = likelihood.discretizeBranchLength (distanceToParent)
-
     unpaddedRows, unpaddedCols = seqs.shape
-    seqs, parentIndex, discretizedDistanceToParent, transCounts = likelihood.padAlignment (seqs, parentIndex, discretizedDistanceToParent, transCounts)
+    seqs, parentIndex, distanceToParent, transCounts = likelihood.padAlignment (seqs, parentIndex, distanceToParent, transCounts)
     paddedRows, paddedCols = seqs.shape
     logging.warning("Padded alignment %s from %d x %d to %d x %d" % (os.path.basename(alignFilename), unpaddedRows, unpaddedCols, paddedRows, paddedCols))
-    return seqs, parentIndex, discretizedDistanceToParent, transCounts
+
+    discretizedDistanceToParent = likelihood.discretizeBranchLength (distanceToParent)
+    return seqs, parentIndex, discretizedDistanceToParent, distanceToParent, transCounts
 
 def loadMultipleTreesAndAlignments (treeDir, alignDir, alphabet, families = None, limit = None, treeSuffix = '.nh', alignSuffix = '.aa.fasta'):
     if families is not None:
@@ -41,18 +41,60 @@ def loadMultipleTreesAndAlignments (treeDir, alignDir, alphabet, families = None
 def loadTreeFamData (treeFamDir, alphabet, **kwargs):
     return loadMultipleTreesAndAlignments (treeFamDir, treeFamDir, alphabet, **kwargs)
 
-def createLossFunction (dataset, model_factory, alphabet, useKM03 = False):
+def zero(params):
+    return 0
+
+def oldCreateLossFunction (dataset, model_factory, alphabet, includeSubs = True, includeIndels = True, useKM03 = False):
     def loss (params):
         subRate, rootProb, indelParams = model_factory (params)
         discSubMatrix = likelihood.computeSubMatrixForDiscretizedTimes (subRate)
         discTransMat = likelihood.computeTransMatForDiscretizedTimes (indelParams, alphabet, useKM03=useKM03)
         ll = 0.
-        for seqs, parentIndex, discretizedDistanceToParent, transCounts in dataset:
+        for seqs, parentIndex, discretizedDistanceToParent, distanceToParent, transCounts in dataset:
             trans_ll = likelihood.transLogLikeForTransMats (transCounts,
                                                             likelihood.getTransMatForDiscretizedTimes (discretizedDistanceToParent, discTransMat))
             sub_ll = likelihood.subLogLikeForMatrices (seqs, parentIndex,
                                                        likelihood.getSubMatrixForDiscretizedBranchLengths (discretizedDistanceToParent, discSubMatrix),
                                                        rootProb)
             ll = ll - jnp.sum(sub_ll) - jnp.sum(trans_ll)
+        return ll
+    return loss
+
+def createLossFunction (dataset, model_factory, alphabet, includeSubs = True, includeIndels = True, useKM03 = False):
+    subLoss = createSubLossFunction (dataset, model_factory) if includeSubs else zero
+    indelLoss = createIndelLossFunction (dataset, model_factory, alphabet, useKM03=useKM03) if includeIndels else zero
+    return lambda params: subLoss(params) + indelLoss(params)
+
+# BUG WARNING: NOT discretizing the indel loss appears to cause NaNs after one round of training
+def createIndelLossFunction (dataset, model_factory, alphabet, discretize = True, useKM03 = False):
+    def loss (params):
+        _subRate, _rootProb, indelParams = model_factory (params)
+        if discretize:
+            discTransMat = likelihood.computeTransMatForDiscretizedTimes (indelParams, alphabet, useKM03=useKM03)
+        ll = 0.
+        for _seqs, _parentIndex, discretizedDistanceToParent, distanceToParent, transCounts in dataset:
+            if discretize:
+                trans_ll = likelihood.transLogLikeForTransMats (transCounts,
+                                                                likelihood.getTransMatForDiscretizedTimes (discretizedDistanceToParent, discTransMat))
+            else:
+                trans_ll = likelihood.transLogLike (transCounts, distanceToParent, indelParams, alphabet)
+            ll = ll - jnp.sum(trans_ll)
+        return ll
+    return loss
+
+def createSubLossFunction (dataset, model_factory, discretize = True):
+    def loss (params):
+        subRate, rootProb, _indelParams = model_factory (params)
+        if discretize:
+            discSubMatrix = likelihood.computeSubMatrixForDiscretizedTimes (subRate)
+        ll = 0.
+        for seqs, parentIndex, discretizedDistanceToParent, distanceToParent, _transCounts in dataset:
+            if discretize:
+                sub_ll = likelihood.subLogLikeForMatrices (seqs, parentIndex,
+                                                           likelihood.getSubMatrixForDiscretizedBranchLengths (discretizedDistanceToParent, discSubMatrix),
+                                                           rootProb)
+            else:
+                sub_ll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, subRate, rootProb)
+            ll = ll - jnp.sum(sub_ll)
         return ll
     return loss

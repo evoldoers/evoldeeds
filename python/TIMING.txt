@@ -1,0 +1,24 @@
+CPU timing results
+
+time python traincigar.py ../data/lg08.json --treeFile ../data/tree.nh --alignFile ../data/align.fa 
+2409.14s user 68.48s system 66% cpu 1:02:04.69 total
+
+time python traincigar.py ../data/lg08.json --treeFile ../data/tree.nh --alignFile ../data/align.fa  --km03 true
+1984.72s user 58.51s system 47% cpu 1:11:29.00 total
+
+time python traincigar.py ../data/lg08.json --treeFile ../data/tree.nh --alignFile ../data/align.fa --omitIndels true
+40.61s user 2.35s system 108% cpu 39.768 total
+
+time python traincigar.py ../data/lg08.json --treeFile ../data/tree.nh --alignFile ../data/align.fa --omitSubs true
+2672.98s user 97.27s system 98% cpu 46:53.58 total
+
+
+The culprit for the slowdown seems to be the time discretization for the indel loss.
+Removing time discretization for transition matrices DOES seem to help, but causes NaNs for a currently unknown reason.
+Possible strategies:
+- debug these NaNs, drop discretization for indel part of loss
+- do the RK4 integration in parallel for all the discretized time points
+
+We still need to try the cherryML composite likelihood strategy.
+However having a non-glacial reference implementation will be very useful for this.
+So it seems worth fixing this problem first.

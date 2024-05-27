@@ -25,10 +25,14 @@ def treeIsValid (distanceToParent, parentIndex, alignmentRows):
 # To pad columns, set alignment[paddingRow,paddingCol:] = -1
 
 def subLogLike (alignment, distanceToParent, parentIndex, subRate, rootProb):
-    subMatrix = computeSubMatrixForBranchLengths (distanceToParent, subRate)
+    subMatrix = computeSubMatrixForTimes (distanceToParent, subRate)
     return subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb)
 
-def computeSubMatrixForBranchLengths (distanceToParent, subRate):
+def transLogLike (transCounts, distanceToParent, indelParams, alphabet):
+    transMats = computeTransMatForTimes (distanceToParent, indelParams, alphabet)
+    return transLogLikeForTransMats (transCounts, transMats)
+
+def computeSubMatrixForTimes (distanceToParent, subRate):
     assert distanceToParent.ndim == 1
     assert subRate.ndim >= 2
     R, = distanceToParent.shape
@@ -44,7 +48,7 @@ def getDiscretizedTimes (discretizationParams=defaultDiscretizationParams):
 
 def computeSubMatrixForDiscretizedTimes (subRate, discretizationParams=defaultDiscretizationParams):
     t = getDiscretizedTimes (discretizationParams)
-    discreteTimeSubMatrix = computeSubMatrixForBranchLengths (t, subRate)  # (*H,T,A,A)
+    discreteTimeSubMatrix = computeSubMatrixForTimes (t, subRate)  # (*H,T,A,A)
     return discreteTimeSubMatrix
 
 def discretizeBranchLength (t, discretizationParams=defaultDiscretizationParams):
@@ -77,6 +81,10 @@ def getTransMatForDiscretizedTimes (discretizedTimes, discreteTimeTransMat):
     branches = discreteTimeTransMat[...,discretizedTimes[1:],:,:]  # (...categories...,T-1,A,A)
     root = logRootTransMat() * jnp.ones_like(branches[...,0:1,:,:])  # (...categories...,1,A,A)
     return jnp.concatenate ([root, branches], axis=-3)
+
+def computeTransMatForTimes (ts, indelParams, alphabet):
+    branches = jnp.stack ([h20.transitionMatrix(t,indelParams,alphabetSize=len(alphabet)) for t in ts[1:]], axis=0)
+    return jnp.concatenate ([logRootTransMat()[None,:,:], logTransMat(branches)], axis=0)
 
 def transLogLikeForTransMats (transCounts, transMats):
     assert transCounts.shape == transMats.shape, "transCounts.shape = %s, transMats.shape = %s" % (transCounts.shape, transMats.shape)  # (...categories...,T,A,A)

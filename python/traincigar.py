@@ -20,12 +20,15 @@ def main (modelFile: str,
           limitFamilies: int = None,
           reversible: bool = False,
           km03: bool = False,
+          omitIndels: bool = False,
+          omitSubs: bool = False,
           train: bool = True,
           init_lr: float = 1e-3,
           max_iter: int = 1000,
           min_inc: float = 1e-6,
           patience: int = 10,
           show_grads: bool = False,
+          use_jit: bool = True,
           ):
     """
     Compute derivatives of log-likelihood for tree, alignment, and model.
@@ -45,6 +48,7 @@ def main (modelFile: str,
         max_iter: Maximum number of iterations
         min_inc: Minimum fractional increase in log-likelihood
         show_grads: Show gradients
+        use_jit: Use JIT compilation
     """
 
     # Read model and alphabet
@@ -90,7 +94,7 @@ def main (modelFile: str,
     # Create loss function
     sub_model_factory = likelihood.parametricReversibleSubModel if reversible else likelihood.parametricSubModel
     ggi_model_factory = likelihood.createGGIModelFactory (sub_model_factory)
-    loss = dataset.createLossFunction (data, ggi_model_factory, alphabet, useKM03=km03)
+    loss = dataset.createLossFunction (data, ggi_model_factory, alphabet, includeSubs=not omitSubs, includeIndels=not omitIndels, useKM03=km03)
 
     # Initialize parameters of the model + optimizer.
     params = { 'subrate': mixture[0][0],
@@ -100,7 +104,8 @@ def main (modelFile: str,
     # Training loop
     if train:
         loss_value_and_grad = jax.value_and_grad (loss)
-        loss_value_and_grad = jax.jit (loss_value_and_grad)
+        if use_jit:
+            loss_value_and_grad = jax.jit (loss_value_and_grad)
 
         optimizer = optax.adam(init_lr)
         opt_state = optimizer.init(params)
@@ -130,8 +135,9 @@ def main (modelFile: str,
         subRate, rootProb, indelParams = ggi_model_factory (best_params)
         print (json.dumps (likelihood.toHistorianParams (alphabet, [(subRate, rootProb)], indelParams)))
     else:
-        loss_jit = jax.jit(loss)
-        ll = loss_jit(params)
+        if use_jit:
+            loss = jax.jit(loss)
+        ll = loss(params)
         print("Loss (negative log-likelihood): %f" % ll)
 
 
