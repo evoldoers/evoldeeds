@@ -8,7 +8,6 @@ from jax.scipy.linalg import expm
 from functools import partial
 from jax import jit
 
-import diffrax
 from diffrax import diffeqsolve, ODETerm, Dopri5, PIDController, ConstantStepSize, SaveAt
 
 import logging
@@ -35,12 +34,14 @@ def derivs (t, counts, indelParams):
   unsafe_denom = M*(1.-y) + L*q*y + L*M*(y*(1.+b-q)-1.)
   denom = jnp.where (unsafe_denom > 0., unsafe_denom, 1.)   # avoid NaN gradient at zero
   one_minus_m = jnp.where (M < 1., 1. - M, smallest_float32)   # avoid NaN gradient at zero
-  return jnp.where (unsafe_denom > 0.,
-                    jnp.array (((mu*b*u*L*M*(1.-y)/denom - (lam+mu)*a,
-                                 -b*num*L/denom + lam*(1.-b),
-                                 -u*num*L/denom + lam*a,
-                                 ((M*(1.-L)-q*L*(1.-M))*num/denom - q*lam/(1.-y))/one_minus_m))),
-                    jnp.array ((-lam-mu,lam,lam,0.)))
+  d = jnp.where (unsafe_denom > 0.,
+                  jnp.array (((mu*b*u*L*M*(1.-y)/denom - (lam+mu)*a,
+                                -b*num*L/denom + lam*(1.-b),
+                                -u*num*L/denom + lam*a,
+                                ((M*(1.-L)-q*L*(1.-M))*num/denom - q*lam/(1.-y))/one_minus_m))),
+                  jnp.array ((-lam-mu,lam,lam,0.)))
+#  jax.debug.print("t={t} counts={counts} indelParams={indelParams} L={L} M={M} num={num} denom={denom} one_minus_m={one_minus_m} d={d}", t=t, counts=counts, indelParams=indelParams, L=L, M=M, num=num, denom=denom, one_minus_m=one_minus_m, d=d)
+  return d
 
 # calculate counts (a,b,u,q) by numerical integration
 def initCounts(indelParams):
@@ -78,10 +79,10 @@ def integrateCounts_RK4 (t, indelParams, /, steps=100, ts=None, **kwargs):
 #  for t,dt in zip(ts[0:-1],dts):
 #    y1, y_out = RK4body (y1, (t,dt))
 #    ys.append(y_out)
-  return y1, ys, ts
+  return y1, jnp.concatenate([jnp.array([y0]),ys],axis=0), ts
 
 # calculate counts (a,b,u,q) by numerical integration using diffrax
-def integrateCounts_diffrax (t, params, /, step = None, rtol = 1e-3, atol = 1e-3, **kwargs):
+def integrateCounts_diffrax (t, indelParams, /, step = None, rtol = 1e-3, atol = 1e-3, ts = None, **kwargs):
   term = ODETerm(derivs)
   solver = Dopri5()
   if step is None and rtol is None and atol is None:
@@ -90,29 +91,16 @@ def integrateCounts_diffrax (t, params, /, step = None, rtol = 1e-3, atol = 1e-3
       stepsize_controller = ConstantStepSize()
   else:
       stepsize_controller = PIDController (rtol, atol)
-  y0 = initCounts(params)
-  sol = diffeqsolve (term, solver, 0., t, step, y0, args=params,
+  y0 = initCounts(indelParams)
+  sol = diffeqsolve (term, solver, 0., t, step, y0, args=indelParams,
                      stepsize_controller=stepsize_controller,
-                     saveat = SaveAt(steps=True),
+                     **({'saveat': SaveAt(t0=False,t1=False,ts=ts)} if ts is not None else {}),
                      **kwargs)
-  return sol.ys[-1], jnp.concatenate([jnp.array([y0]),sol.ys],axis=0), jnp.concatenate([jnp.array([0]),sol.ts],axis=0)
+#  jax.debug.print('ts={ts} ts.shape={ts.shape} sol.ts={sol.ts} sol.ts.shape={sol.ts.shape} sol.ys={sol.ys}', sol=sol, ts=ts)
+  return sol.ys[-1], sol.ys, sol.ts
 
-def derivs (t, counts, params):
-  lam,mu,x,y = params
-  a,b,u,q = counts
-  S = indels (t, lam, x)
-  D = indels (t, mu, y)
-  denom = S - y * (S - b - q*D)
-  num = mu * (b + q*D)
-  return jnp.where (t > 0.,
-                    jnp.array (((mu*b*u*(1.-y)/denom - (lam+mu)*a,
-                                 -b*num/denom + lam*(1.-b),
-                                 -u*num/denom + lam*a,
-                                 ((S-q*D)*num/denom - q*lam*(D+1)/(1.-y))/D))),
-                    jnp.array ((-lam-mu,lam,lam,0.)))
-
-#integrateCounts = integrateCounts_diffrax
-integrateCounts = integrateCounts_RK4
+integrateCounts = integrateCounts_diffrax
+#integrateCounts = integrateCounts_RK4
 
 # test whether time is past threshold of alignment signal being undetectable
 def alignmentIsProbablyUndetectable (t, indelParams, alphabetSize):
@@ -135,14 +123,14 @@ def zeroTimeTransitionMatrix (indelParams):
 # convert counts (a,b,u,q) to transition matrix ((a,b,c),(f,g,h),(p,q,r))
 def smallTimeTransitionMatrix (t, indelParams, /, **kwargs):
     lam,mu,x,y = indelParams
-    jax.debug.print("t={t} lam={lam} mu={mu} x={x} y={y}", t=t, lam=lam, mu=mu, x=x, y=y)
+#    jax.debug.print("t={t} lam={lam} mu={mu} x={x} y={y}", t=t, lam=lam, mu=mu, x=x, y=y)
     abuq, _abuq_by_t, _ts = integrateCounts(t,indelParams,**kwargs)
     return transitionMatrixFromCounts (t, indelParams, abuq, **kwargs)
 
 def transitionMatrixFromCounts (t, indelParams, counts, /, **kwargs):
     lam,mu,x,y = indelParams
     a,b,u,q = counts
-    jax.debug.print("t={t} lam={lam} mu={mu} x={x} y={y} a={a} b={b} u={u} q={q}", t=t, lam=lam, mu=mu, x=x, y=y, a=a, b=b, u=u, q=q)
+#    jax.debug.print("t={t} lam={lam} mu={mu} x={x} y={y} a={a} b={b} u={u} q={q}", t=t, lam=lam, mu=mu, x=x, y=y, a=a, b=b, u=u, q=q)
     L = lm(t,lam,x)
     M = lm(t,mu,y)
     one_minus_L = jnp.where (L < 1., 1. - L, smallest_float32)   # avoid NaN gradient at zero
@@ -153,6 +141,7 @@ def transitionMatrixFromCounts (t, indelParams, counts, /, **kwargs):
     if kwargs.get('norm',True):
         mx = jnp.maximum (0, mx)
         mx = mx / jnp.sum (mx, axis=-1, keepdims=True)
+#    jax.debug.print ("mx={mx}", mx=mx)
     return mx
 
 # get limiting transition matrix for large times
@@ -183,6 +172,7 @@ def transitionMatrixForTimes (ts, indelParams, /, alphabetSize=20, transitionMat
 def transitionMatrixForMonotonicTimes (ts, indelParams, /, alphabetSize=20, **kwargs):
     assert len(ts) > 0
     _abuq_final, abuqs, _ts = integrateCounts(ts[-1],indelParams,ts=ts,**kwargs)
+#    jax.debug.print("ts={ts} ts.shape={ts.shape} abuqs.shape={abuqs.shape} abuqs={abuqs}", ts=ts, abuqs=abuqs)
     return jnp.stack ([jnp.where (t > 0.,
                                   jnp.where (alignmentIsProbablyUndetectable(t,indelParams,alphabetSize),
                                              largeTimeTransitionMatrix(t,indelParams),

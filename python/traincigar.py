@@ -11,7 +11,7 @@ import logging
 import likelihood
 import dataset
 
-jax.config.update("jax_debug_nans", True)
+#jax.config.update("jax_debug_nans", True)
 
 def main (modelFile: str,
           treeFile: str = None,

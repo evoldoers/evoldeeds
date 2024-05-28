@@ -25,8 +25,10 @@ So it seems worth fixing this problem first.
 
 Plan:
 A. Get robust indel solver
- 1. Why/where do we get NaNs when using RK4 integration?
- 2. Why/where do we get infinite a,b,u,q when using diffrax?
- 3. What is the fastest strategy for an indel solver? Discretized/not, diffrax/RK4, recurrent/parallel? (We will need this even for cherryML composite likelihood.)
+ 1. What is the fastest strategy for an indel solver? Discretized/not, diffrax/RK4, recurrent/parallel? (We will need this even for cherryML composite likelihood.)
+    - Discretized times are slow whether we use RK4 or diffrax. (NB with JIT only. Running without JIT is OK but too slow.)
+    - It's unclear why this is. Could explore alternate implementations. E.g. do RK4 in parallel with fixed # of steps.
+    - For now discretization is disabled for the indel likelihood by default, but this may limit speed for big datasets (c.f. data-independent scaling of CherryML).
+    - Maybe the smart thing here is to move to composite likelihood and try a large dataset, see how the runtime scales with data in practice.
 B. Implement cherryML composite likelihood
 C. Implement mixture model

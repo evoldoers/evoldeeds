@@ -55,7 +55,7 @@ def discretizeBranchLength (t, discretizationParams=defaultDiscretizationParams)
     tMin, tMax, nSteps = discretizationParams
     return jnp.where (t == 0,
                       0,
-                      1 + jnp.digitize (jnp.clip (t, tMin, tMax), jnp.geomspace (tMin, tMax, nSteps)))
+                      jnp.digitize (jnp.clip (t, tMin, tMax), jnp.geomspace (tMin, tMax, nSteps)))
 
 def getSubMatrixForDiscretizedBranchLengths (discretizedTimes, discreteTimeSubMatrix):
     subMatrix = discreteTimeSubMatrix[...,discretizedTimes,:,:]  # (*H,R,A,A)
@@ -88,6 +88,7 @@ def computeTransMatForTimes (ts, indelParams, alphabet):
 
 def transLogLikeForTransMats (transCounts, transMats):
     assert transCounts.shape == transMats.shape, "transCounts.shape = %s, transMats.shape = %s" % (transCounts.shape, transMats.shape)  # (...categories...,T,A,A)
+#    jax.debug.print('transCounts={}, transMats={}', transCounts, transMats)
     trans_ll = transCounts * transMats
     trans_ll = jnp.sum (trans_ll, axis=(-1,-2))
     return trans_ll  # (...categories...,rows)

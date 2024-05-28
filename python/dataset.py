@@ -1,6 +1,7 @@
 import os
 import glob
 
+import jax
 import jax.numpy as jnp
 
 import logging
