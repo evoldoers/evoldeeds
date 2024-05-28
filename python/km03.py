@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 
 t_min = 1e-9
-def transitionMatrix (t, indelParams):
+def transitionMatrix (t, indelParams, **kwargs):
     t_safe = jnp.maximum (t, t_min)
     return jnp.where (t >= t_min,
                       transitionMatrix_unsafe (t_safe, indelParams),

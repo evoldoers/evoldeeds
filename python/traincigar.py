@@ -58,19 +58,8 @@ def main (modelFile: str,
         modelJson = json.load (f)
     alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, nQuantiles = likelihood.parseHistorianParams (modelJson)
 
-    # For now, only one mixture component is supported
-    # As a more general solution that is a superset of Historian's model, we would like...
-    #            familyType ~ Categorical(familyMixtureWeights)
-    #           indelParams = indelParams[familyType]
-    #  columnMixtureWeights = columnMixtureWeights[familyType]
-    #            columnType ~ Categorical(columnMixtureWeights)
-    #     subRate, rootProb = subRateRootProb[columnType]
-    # We will need a JSON format for this that is ideally backward-compatible with Historian
-    assert len(mixture) == 1, "Only one mixture component is supported for substitution model"
-    assert len(indelParams) == 1, "Only one indel parameter set is supported for indel model"
-    indelParams = likelihood.indelModelToParams (*indelParams[0])
-
     # Convert rates and probabilities to exchangeabilities and logits
+    indelParams = [likelihood.indelModelToLogits(*p) for p in indelParams]
     if reversible:
         mixture = [(likelihood.zeroDiagonal(likelihood.subMatrixToExchangeabilityMatrix(subRate,rootProb)),
                     likelihood.probsToLogits(rootProb)) for subRate, rootProb in mixture]
@@ -95,13 +84,15 @@ def main (modelFile: str,
 
     # Create loss function
     sub_model_factory = likelihood.parametricReversibleSubModel if reversible else likelihood.parametricSubModel
-    ggi_model_factory = likelihood.createGGIModelFactory (sub_model_factory)
+    ggi_model_factory = likelihood.createGGIModelFactory (sub_model_factory, nQuantiles)
     loss = dataset.createLossFunction (data, ggi_model_factory, alphabet, includeSubs=not omitSubs, includeIndels=not omitIndels, useKM03=km03)
 
     # Initialize parameters of the model + optimizer.
-    params = { 'subrate': mixture[0][0],
-               'root': mixture[0][1],
-               'indels': indelParams }
+    params = { 'indels': indelParams,
+               'subs': [{'subrate':s,'rootlogits':r} for (s,r) in mixture],
+               'alntypelogits': alnTypeLogits,
+               'coltypelogits': colTypeLogits,
+               'colshape': colShape }
 
     # Training loop
     if train:

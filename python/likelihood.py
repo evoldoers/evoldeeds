@@ -2,6 +2,9 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import expm
 
+import tensorflow_probability.substrates.jax as tfp
+from tensorflow_probability.substrates.jax.distributions import Gamma
+
 import h20
 import km03
 
@@ -28,8 +31,8 @@ def subLogLike (alignment, distanceToParent, parentIndex, subRate, rootProb):
     subMatrix = computeSubMatrixForTimes (distanceToParent, subRate)
     return subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb)
 
-def transLogLike (transCounts, distanceToParent, indelParams, alphabet):
-    transMats = computeTransMatForTimes (distanceToParent, indelParams, alphabet)
+def transLogLike (transCounts, distanceToParent, indelParams, alphabet, useKM03 = False):
+    transMats = computeTransMatForTimes (distanceToParent, indelParams, alphabet, useKM03=useKM03)
     return transLogLikeForTransMats (transCounts, transMats)
 
 def computeSubMatrixForTimes (distanceToParent, subRate):
@@ -82,8 +85,9 @@ def getTransMatForDiscretizedTimes (discretizedTimes, discreteTimeTransMat):
     root = logRootTransMat() * jnp.ones_like(branches[...,0:1,:,:])  # (...categories...,1,A,A)
     return jnp.concatenate ([root, branches], axis=-3)
 
-def computeTransMatForTimes (ts, indelParams, alphabet):
-    branches = jnp.stack ([h20.transitionMatrix(t,indelParams,alphabetSize=len(alphabet)) for t in ts[1:]], axis=0)
+def computeTransMatForTimes (ts, indelParams, alphabet, useKM03=False):
+    transitionMatrix = km03.transitionMatrix if useKM03 else h20.transitionMatrix
+    branches = jnp.stack ([transitionMatrix(t,indelParams,alphabetSize=len(alphabet)) for t in ts[1:]], axis=0)
     return jnp.concatenate ([logRootTransMat()[None,:,:], logTransMat(branches)], axis=0)
 
 def transLogLikeForTransMats (transCounts, transMats):
@@ -111,9 +115,8 @@ def subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb, maxChunk
     tokenLookup = jnp.concatenate([jnp.ones(A)[None,:],jnp.eye(A)])
     likelihood = tokenLookup[alignment + 1]  # (R,C,A)
     if len(H) > 0:
-        likelihood = jnp.expand_dims (likelihood, jnp.arange(len(H)))  # (*ones_like(H),R,C,A)
-        likelihood = jnp.repeat (likelihood, repeats=jnp.array(H), axis=jnp.arange(len(H)))  # (*H,R,C,A)
-    logNorm = jnp.zeros(*H,C)  # (*H,C)
+        likelihood = jnp.repeat (likelihood[None,...], jnp.prod(jnp.array(H)), axis=0).reshape(*H,R,C,A)
+    logNorm = jnp.zeros((*H,C))  # (*H,C)
     # Compute log-likelihood for all columns in parallel by iterating over nodes in postorder
     for child in range(R-1,0,-1):
         parent = parentIndex[child]
@@ -155,7 +158,7 @@ def zeroDiagonal (matrix):
     return matrix - jnp.diag(jnp.diag(matrix))
 
 def logitsToProbs (logits):
-    return jax.nn.softmax(logits)
+    return jax.nn.softmax(logits,axis=-1)
 
 def probsToLogits (probs):
     return jnp.log (probs)
@@ -164,7 +167,7 @@ def logitToProb (logit):
     return 1 / (1 + jnp.exp (logit))
 
 def probToLogit (prob):
-    return jnp.log (1/prob - 1)
+    return jnp.log (1/jnp.clip(prob,0,1) - 1)
 
 def normalizeRootProb (rootProb):
     return rootProb / jnp.sum(rootProb)
@@ -192,16 +195,26 @@ def parametricReversibleSubModel (subRate, rootLogits):
     return subRate, rootProb
 
 def parametricIndelModel (lam, mu, x_logits, y_logits):
-    return jnp.abs(lam), jnp.abs(mu), logitToProb(x_logits), logitToProb(y_logits)
+    return jnp.array ([jnp.abs(lam), jnp.abs(mu), logitToProb(x_logits), logitToProb(y_logits)])
 
-def indelModelToParams (lam, mu, x, y):
-    return lam, mu, probToLogit(x), probToLogit(y)
+def indelModelToLogits (lam, mu, x, y):
+    return jnp.array ([lam, mu, probToLogit(x), probToLogit(y)])
 
-def createGGIModelFactory (subModelFactory):
+def createGGIModelFactory (subModelFactory, nQuantiles):
     def parametricGGIModel (params):
-        subRate, rootProb = subModelFactory (params['subrate'], params['root'])
-        indelParams = parametricIndelModel (*params['indels'])
-        return subRate, rootProb, indelParams
+        mixture = [subModelFactory(p['subrate'],p['rootlogits']) for p in params['subs']]
+        subRate = jnp.stack([m[0] for m in mixture], axis=0)  # (nColTypes,A,A)
+        colShape = params['colshape']
+        colGammas = [Gamma(s,s) for s in colShape]
+        quantileProbs = (2*jnp.arange(nQuantiles) + 1) / (2*nQuantiles)
+        colQuantiles = jnp.stack ([jnp.array ([g.quantile(p) for g in colGammas]) for p in quantileProbs], axis=0)  # (nQuantiles,nColTypes)
+        subRate = jnp.einsum ('cij,qc->qcij', subRate, colQuantiles)  # (nQuantiles,nColTypes,A,A)
+        rootProb = jnp.stack([m[1] for m in mixture], axis=0)  # (nColTypes,A)
+        rootProb = jnp.repeat (rootProb[None,:,:], nQuantiles, axis=0)  # (nQuantiles,nColTypes,A)
+        indelParams = [parametricIndelModel(*p) for p in params['indels']]  # (nAlignTypes,4)
+        alnTypeWeight = logitsToProbs(params['alntypelogits'])  # (nAlignTypes,)
+        colTypeWeight = logitsToProbs(params['coltypelogits'])  # (nAlignTypes,nColTypes)
+        return subRate, rootProb, indelParams, alnTypeWeight, colTypeWeight, colQuantiles
     return parametricGGIModel
 
 def parseHistorianParams (params):
@@ -212,40 +225,44 @@ def parseHistorianParams (params):
         subRate, rootProb = normalizeSubModel (subRate, rootProb)
         return subRate, rootProb
     if 'mixture' in params or 'coltype' in params:
-        mixture = [parseSubRate(p) for p in params.get('mixture',params.get('coltype'))]
+        mixtureJson = params.get('mixture',params.get('coltype'))  # backward compatible name for coltype is 'mixture'
+        mixture = [parseSubRate(p) for p in mixtureJson]
+        colShape = jnp.array([p.get('shape',1) for p in mixtureJson], dtype=jnp.float32)
     else:
         mixture = [parseSubRate(params)]
+        colShape = jnp.array([params.get('shape',1)], dtype=jnp.float32)
     def parseIndelParams (cpt):
         return tuple(cpt.get(name,0) for name in ['insrate','delrate','insextprob','delextprob'])
     alignTypes = params.get ('aligntype', [params])
     indelParams = [parseIndelParams(t) for t in alignTypes]
-    alnTypeLogits = jnp.array([t.get('weight',0) for t in alignTypes])   # famTypeLogits[i] \propto log P(alignType=i)
-    colTypeLogits = jnp.stack([jnp.array([t.get('coltypeweight',jnp.zeros(len(mixture))) for t in alignTypes])], axis=0)  # colTypeLogits[i,j] \propto log P(columnType=j | alignType=i)
-    colShape = jnp.stack([jnp.array([t.get('colshape',jnp.ones(len(mixture))) for t in alignTypes])], axis=0)  # colShape[i,j] = shape param for gamma distribution of colType j in alnType i (scale=shape assumed)
-    quantiles = params.get('quantiles',1)  # number of quantiles (rate classes) for column gamma distributions
+    alnTypeLogits = jnp.log(jnp.array([t.get('weight',1) for t in alignTypes], dtype=jnp.float32))   # alnTypeLogits[i] \propto log P(alignType=i)
+    colTypeLogits = jnp.log(jnp.stack([jnp.array(t.get('coltypeweight',jnp.ones(len(mixture), dtype=jnp.float32))) for t in alignTypes], axis=0))  # colTypeLogits[i,j] \propto log P(columnType=j | alignType=i)
+    quantiles = params.get('quantiles',2)  # number of quantiles (rate classes) for column gamma distributions
     return alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, quantiles
 
 def toHistorianParams (alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, nQuantiles):
-    def toSubRate (subRate, rootProb):
+    def toSubRate (shape, subRate, rootProb):
         return { 'subrate': {alphabet[i]: {alphabet[j]: float(subRate[i,j]) for j in range(len(alphabet)) if i != j} for i in range(len(alphabet))},
-                 'rootprob': {alphabet[i]: float(rootProb[i]) for i in range(len(alphabet))} }
+                 'rootprob': {alphabet[i]: float(rootProb[i]) for i in range(len(alphabet))},
+                 'shape': shape }
     def toIndelParams (indelParams):
         return {name: float(param) for name,param in zip(['insrate','delrate','insextprob','delextprob'],indelParams)}
     nColTypes = len(mixture)
     nAlignTypes = len(alnTypeLogits)
     assert alnTypeLogits.shape == (nAlignTypes,)
     assert colTypeLogits.shape == (nAlignTypes,nColTypes)
-    assert colShape.shape == (nAlignTypes,nColTypes)
+    assert colShape.shape == (nColTypes,)
     # use backwardly-compatible format if possible, so Historian can read it
     if nAlignTypes == 1 and nQuantiles == 1:
         if nColTypes == 1:
-            return {**toSubRate(*mixture[0]), **toIndelParams(indelParams[0])}
+            return {**toSubRate(*mixture[0]), 'shape': colShape[0], **toIndelParams(indelParams[0])}
         else:
-            return {'mixture': [toSubRate(*m) for m in mixture],
+            return {'mixture': [toSubRate(colShape[n],*mixture[n]) for n in range(nColTypes)],
                      **toIndelParams(indelParams[0])}
-    return {'coltype': [toSubRate(*m) for m in mixture],
-            'aligntype': [{'weight': float(alnTypeLogits[i]),
-                           'colshape': [float(s) for s in colShape[i,:]],
-                           'coltypeweight': [float(w) for w in colTypeLogits[i,:]],
+    alnTypeProbs = jax.nn.softmax(alnTypeLogits)
+    colTypeProbs = jax.nn.softmax(colTypeLogits, axis=-1)
+    return {'coltype': [toSubRate(colShape[n],*mixture[n]) for n in range(nColTypes)],
+            'aligntype': [{'weight': float(alnTypeProbs[i]),
+                           'coltypeweight': [float(w) for w in colTypeProbs[i,:]],
                            **toIndelParams(indelParams[i])} for i in range(nAlignTypes)],
             'quantiles': nQuantiles}

@@ -3,6 +3,7 @@ import glob
 
 import jax
 import jax.numpy as jnp
+from jax.scipy.special import logsumexp
 
 import logging
 
@@ -23,8 +24,7 @@ def loadTreeAndAlignment (treeFilename, alignFilename, alphabet):
     paddedRows, paddedCols = seqs.shape
     logging.warning("Padded alignment %s from %d x %d to %d x %d" % (os.path.basename(alignFilename), unpaddedRows, unpaddedCols, paddedRows, paddedCols))
 
-    discretizedDistanceToParent = likelihood.discretizeBranchLength (distanceToParent)
-    return seqs, parentIndex, discretizedDistanceToParent, distanceToParent, transCounts
+    return seqs, parentIndex, distanceToParent, transCounts
 
 def loadMultipleTreesAndAlignments (treeDir, alignDir, alphabet, families = None, limit = None, treeSuffix = '.nh', alignSuffix = '.aa.fasta'):
     if families is not None:
@@ -42,60 +42,26 @@ def loadMultipleTreesAndAlignments (treeDir, alignDir, alphabet, families = None
 def loadTreeFamData (treeFamDir, alphabet, **kwargs):
     return loadMultipleTreesAndAlignments (treeFamDir, treeFamDir, alphabet, **kwargs)
 
-def zero(params):
-    return 0
-
-def oldCreateLossFunction (dataset, model_factory, alphabet, includeSubs = True, includeIndels = True, useKM03 = False):
-    def loss (params):
-        subRate, rootProb, indelParams = model_factory (params)
-        discSubMatrix = likelihood.computeSubMatrixForDiscretizedTimes (subRate)
-        discTransMat = likelihood.computeTransMatForDiscretizedTimes (indelParams, alphabet, useKM03=useKM03)
-        ll = 0.
-        for seqs, parentIndex, discretizedDistanceToParent, distanceToParent, transCounts in dataset:
-            trans_ll = likelihood.transLogLikeForTransMats (transCounts,
-                                                            likelihood.getTransMatForDiscretizedTimes (discretizedDistanceToParent, discTransMat))
-            sub_ll = likelihood.subLogLikeForMatrices (seqs, parentIndex,
-                                                       likelihood.getSubMatrixForDiscretizedBranchLengths (discretizedDistanceToParent, discSubMatrix),
-                                                       rootProb)
-            ll = ll - jnp.sum(sub_ll) - jnp.sum(trans_ll)
-        return ll
-    return loss
-
 def createLossFunction (dataset, model_factory, alphabet, includeSubs = True, includeIndels = True, useKM03 = False):
-    subLoss = createSubLossFunction (dataset, model_factory) if includeSubs else zero
-    indelLoss = createIndelLossFunction (dataset, model_factory, alphabet, useKM03=useKM03) if includeIndels else zero
-    return lambda params: subLoss(params) + indelLoss(params)
-
-# BUG WARNING: NOT discretizing the indel loss appears to cause NaNs after one round of training
-def createIndelLossFunction (dataset, model_factory, alphabet, discretize = False, useKM03 = False):
     def loss (params):
-        _subRate, _rootProb, indelParams = model_factory (params)
-        if discretize:
-            discTransMat = likelihood.computeTransMatForDiscretizedTimes (indelParams, alphabet, useKM03=useKM03)
-        ll = 0.
-        for _seqs, _parentIndex, discretizedDistanceToParent, distanceToParent, transCounts in dataset:
-            if discretize:
-                trans_ll = likelihood.transLogLikeForTransMats (transCounts,
-                                                                likelihood.getTransMatForDiscretizedTimes (discretizedDistanceToParent, discTransMat))
+        subRate, rootProb, indelParams, alnTypeWeight, colTypeWeight, colQuantiles = model_factory (params)
+        logQuantiles = jnp.log(len(colQuantiles))
+        colTypeLogWeight = jnp.log(colTypeWeight)
+        alnTypeLogWeight = jnp.log(alnTypeWeight)
+        l_total = 0.
+        for seqs, parentIndex, distanceToParent, transCounts in dataset:
+            if includeSubs:
+                sub_ll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, subRate, rootProb)  # (nQuantiles, nColTypes, nCols)
+                sub_ll = jnp.sum(sub_ll,axis=-1)  # (nQuantiles, nColTypes)
+                sub_ll = logsumexp(sub_ll,axis=0) - logQuantiles  # (nColTypes,)
+                sub_ll = colTypeLogWeight + sub_ll[None,:]  # (nAlignTypes, nColTypes)
+                sub_ll = logsumexp(sub_ll, axis=-1)  # (nAlignTypes,)
             else:
-                trans_ll = likelihood.transLogLike (transCounts, distanceToParent, indelParams, alphabet)
-            ll = ll - jnp.sum(trans_ll)
-        return ll
-    return loss
-
-def createSubLossFunction (dataset, model_factory, discretize = True):
-    def loss (params):
-        subRate, rootProb, _indelParams = model_factory (params)
-        if discretize:
-            discSubMatrix = likelihood.computeSubMatrixForDiscretizedTimes (subRate)
-        ll = 0.
-        for seqs, parentIndex, discretizedDistanceToParent, distanceToParent, _transCounts in dataset:
-            if discretize:
-                sub_ll = likelihood.subLogLikeForMatrices (seqs, parentIndex,
-                                                           likelihood.getSubMatrixForDiscretizedBranchLengths (discretizedDistanceToParent, discSubMatrix),
-                                                           rootProb)
+                sub_ll = 0.
+            if includeIndels:
+                trans_ll = jnp.array ([jnp.sum (likelihood.transLogLike (transCounts, distanceToParent, p, alphabet, useKM03=useKM03)) for p in indelParams])  # (nAlignTypes,)
             else:
-                sub_ll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, subRate, rootProb)
-            ll = ll - jnp.sum(sub_ll)
-        return ll
+                trans_ll = 0.
+            l_total -= logsumexp(alnTypeLogWeight + trans_ll + sub_ll)
+        return l_total
     return loss
