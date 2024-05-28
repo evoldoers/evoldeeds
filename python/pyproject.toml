@@ -11,4 +11,5 @@ dependencies = [
     "jsonargparse >= 4.27.0",
     "jsonnet >= 0.20.0",
     "einops >= 0.7.0",
+    "tensorflow-probability >= 0.24.0",
 ]%            
