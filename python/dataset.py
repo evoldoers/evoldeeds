@@ -42,9 +42,10 @@ def loadMultipleTreesAndAlignments (treeDir, alignDir, alphabet, families = None
 def loadTreeFamData (treeFamDir, alphabet, **kwargs):
     return loadMultipleTreesAndAlignments (treeFamDir, treeFamDir, alphabet, **kwargs)
 
-def createLossFunction (dataset, model_factory, alphabet, includeSubs = True, includeIndels = True, useKM03 = False):
+def createLossFunction (dataset, model_factory, includeSubs = True, includeIndels = True, useKM03 = False):
     def loss (params):
         subRate, rootProb, indelParams, alnTypeWeight, colTypeWeight, colQuantiles = model_factory (params)
+        alphabetSize = subRate.shape[-1]
         logQuantiles = jnp.log(len(colQuantiles))
         colTypeLogWeight = jnp.log(colTypeWeight)
         alnTypeLogWeight = jnp.log(alnTypeWeight)
@@ -59,9 +60,10 @@ def createLossFunction (dataset, model_factory, alphabet, includeSubs = True, in
             else:
                 sub_ll = 0.
             if includeIndels:
-                trans_ll = jnp.array ([jnp.sum (likelihood.transLogLike (transCounts, distanceToParent, p, alphabet, useKM03=useKM03)) for p in indelParams])  # (nAlignTypes,)
+                trans_ll = jnp.array ([jnp.sum (likelihood.transLogLike (transCounts, distanceToParent, p, alphabetSize=alphabetSize, useKM03=useKM03)) for p in indelParams])  # (nAlignTypes,)
             else:
                 trans_ll = 0.
+            jax.debug.print("sub_ll={} trans_ll={}", sub_ll, trans_ll)
             l_total -= logsumexp(alnTypeLogWeight + trans_ll + sub_ll)
         return l_total
     return loss

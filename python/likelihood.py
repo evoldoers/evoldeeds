@@ -31,8 +31,8 @@ def subLogLike (alignment, distanceToParent, parentIndex, subRate, rootProb):
     subMatrix = computeSubMatrixForTimes (distanceToParent, subRate)
     return subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb)
 
-def transLogLike (transCounts, distanceToParent, indelParams, alphabet, useKM03 = False):
-    transMats = computeTransMatForTimes (distanceToParent, indelParams, alphabet, useKM03=useKM03)
+def transLogLike (transCounts, distanceToParent, indelParams, alphabetSize = 20, useKM03 = False):
+    transMats = computeTransMatForTimes (distanceToParent, indelParams, alphabetSize=alphabetSize, useKM03=useKM03)
     return transLogLikeForTransMats (transCounts, transMats)
 
 def computeSubMatrixForTimes (distanceToParent, subRate):
@@ -45,49 +45,15 @@ def computeSubMatrixForTimes (distanceToParent, subRate):
     subMatrix = expm (jnp.einsum('...ij,r->...rij', subRate, distanceToParent))  # (*H,R,A,A)
     return subMatrix
 
-defaultDiscretizationParams = (1e-3, 10, 400)  # tMin, tMax, nSteps
-def getDiscretizedTimes (discretizationParams=defaultDiscretizationParams):
-    return jnp.concat ([jnp.array([0]), jnp.geomspace (*discretizationParams)])
-
-def computeSubMatrixForDiscretizedTimes (subRate, discretizationParams=defaultDiscretizationParams):
-    t = getDiscretizedTimes (discretizationParams)
-    discreteTimeSubMatrix = computeSubMatrixForTimes (t, subRate)  # (*H,T,A,A)
-    return discreteTimeSubMatrix
-
-def discretizeBranchLength (t, discretizationParams=defaultDiscretizationParams):
-    tMin, tMax, nSteps = discretizationParams
-    return jnp.where (t == 0,
-                      0,
-                      jnp.digitize (jnp.clip (t, tMin, tMax), jnp.geomspace (tMin, tMax, nSteps)))
-
-def getSubMatrixForDiscretizedBranchLengths (discretizedTimes, discreteTimeSubMatrix):
-    subMatrix = discreteTimeSubMatrix[...,discretizedTimes,:,:]  # (*H,R,A,A)
-    return subMatrix
-
 def logTransMat (transMat):
     return jnp.log (jnp.maximum (transMat, h20.smallest_float32))
 
 def logRootTransMat():
     return logTransMat (h20.dummyRootTransitionMatrix())
 
-def computeTransMatForDiscretizedTimes (indelParams, alphabet, discretizationParams=defaultDiscretizationParams, useKM03=False):
-    td = getDiscretizedTimes (discretizationParams)
-    if useKM03:
-        transMat = h20.transitionMatrixForTimes(td,indelParams,alphabetSize=len(alphabet),transitionMatrix=km03.transitionMatrix)
-    else:
-        transMat = h20.transitionMatrixForMonotonicTimes(td,indelParams,alphabetSize=len(alphabet))
-    return logTransMat (transMat)
-
-def getTransMatForDiscretizedTimes (discretizedTimes, discreteTimeTransMat):
-    assert discreteTimeTransMat.ndim >= 3
-    assert len(discretizedTimes) > 1
-    branches = discreteTimeTransMat[...,discretizedTimes[1:],:,:]  # (...categories...,T-1,A,A)
-    root = logRootTransMat() * jnp.ones_like(branches[...,0:1,:,:])  # (...categories...,1,A,A)
-    return jnp.concatenate ([root, branches], axis=-3)
-
-def computeTransMatForTimes (ts, indelParams, alphabet, useKM03=False):
+def computeTransMatForTimes (ts, indelParams, alphabetSize=20, useKM03=False):
     transitionMatrix = km03.transitionMatrix if useKM03 else h20.transitionMatrix
-    branches = jnp.stack ([transitionMatrix(t,indelParams,alphabetSize=len(alphabet)) for t in ts[1:]], axis=0)
+    branches = jnp.stack ([transitionMatrix(t,indelParams,alphabetSize=alphabetSize) for t in ts[1:]], axis=0)
     return jnp.concatenate ([logRootTransMat()[None,:,:], logTransMat(branches)], axis=0)
 
 def transLogLikeForTransMats (transCounts, transMats):

@@ -103,7 +103,7 @@ integrateCounts = integrateCounts_diffrax
 #integrateCounts = integrateCounts_RK4
 
 # test whether time is past threshold of alignment signal being undetectable
-def alignmentIsProbablyUndetectable (t, indelParams, alphabetSize):
+def alignmentIsProbablyUndetectable (t, indelParams, alphabetSize = 20):
     lam,mu,x,y = indelParams
     expectedMatchRunLength = 1. / (1. - jnp.exp(-mu*t))
     expectedInsertions = indels(t,lam,x)
@@ -129,15 +129,15 @@ def smallTimeTransitionMatrix (t, indelParams, /, **kwargs):
 
 def transitionMatrixFromCounts (t, indelParams, counts, /, **kwargs):
     lam,mu,x,y = indelParams
-    a,b,u,q = counts
+    a,b,u,q = tuple(jnp.squeeze(x,axis=-1) for x in jnp.split (jnp.array(counts), indices_or_sections=4, axis=-1))
 #    jax.debug.print("t={t} lam={lam} mu={mu} x={x} y={y} a={a} b={b} u={u} q={q}", t=t, lam=lam, mu=mu, x=x, y=y, a=a, b=b, u=u, q=q)
     L = lm(t,lam,x)
     M = lm(t,mu,y)
     one_minus_L = jnp.where (L < 1., 1. - L, smallest_float32)   # avoid NaN gradient at zero
     one_minus_M = jnp.where (M < 1., 1. - M, smallest_float32)   # avoid NaN gradient at zero
-    mx = jnp.array ([[a,b,1-a-b],
-                     [u*L/one_minus_L,1-(b+q*(1-M)/M)*L/one_minus_L,(b+q*(1-M)/M-u)*L/one_minus_L],
-                     [(1-a-u)*M/one_minus_M,q,1-q-(1-a-u)*M/one_minus_M]])
+    mx = jnp.stack ([jnp.stack ([a,b,1-a-b]),
+                     jnp.stack ([u*L/one_minus_L,1-(b+q*(1-M)/M)*L/one_minus_L,(b+q*(1-M)/M-u)*L/one_minus_L]),
+                     jnp.stack ([(1-a-u)*M/one_minus_M,q,1-q-(1-a-u)*M/one_minus_M])])
     if kwargs.get('norm',True):
         mx = jnp.maximum (0, mx)
         mx = mx / jnp.sum (mx, axis=-1, keepdims=True)
@@ -151,7 +151,7 @@ def largeTimeTransitionMatrix (t, indelParams):
     r = 1. - lm(t,mu,y)
     return jnp.array ([[(1-g)*(1-r),g,(1-g)*r],
                        [(1-g)*(1-r),g,(1-g)*r],
-                       [(1-r),0,r]])
+                       [(1-r),jnp.zeros_like(t),r]])
 
 # get transition matrix for any given time
 tMin = 1e-3
@@ -163,22 +163,6 @@ def transitionMatrix (t, indelParams, /, alphabetSize=20, **kwargs):
                                  largeTimeTransitionMatrix(tSafe,indelParams),
                                  smallTimeTransitionMatrix(tSafe,indelParams,**kwargs)),
                       zeroTimeTransitionMatrix(indelParams))
-
-# get transition matrix for a range of times, recomputing counts for each timepoint
-def transitionMatrixForTimes (ts, indelParams, /, alphabetSize=20, transitionMatrix=transitionMatrix, **kwargs):
-    return jnp.stack ([transitionMatrix(t,indelParams,**kwargs) for t in ts], axis=0)
-
-# get transition matrix for a monotonically increasing range of times, re-using counts
-def transitionMatrixForMonotonicTimes (ts, indelParams, /, alphabetSize=20, **kwargs):
-    assert len(ts) > 0
-    _abuq_final, abuqs, _ts = integrateCounts(ts[-1],indelParams,ts=ts,**kwargs)
-#    jax.debug.print("ts={ts} ts.shape={ts.shape} abuqs.shape={abuqs.shape} abuqs={abuqs}", ts=ts, abuqs=abuqs)
-    return jnp.stack ([jnp.where (t > 0.,
-                                  jnp.where (alignmentIsProbablyUndetectable(t,indelParams,alphabetSize),
-                                             largeTimeTransitionMatrix(t,indelParams),
-                                             transitionMatrixFromCounts(t,indelParams,abuq,**kwargs)),
-                                  zeroTimeTransitionMatrix(indelParams)) for t,abuq in zip(ts,abuqs)], axis=0)
-
 
 # get dummy root transition matrix
 def dummyRootTransitionMatrix():

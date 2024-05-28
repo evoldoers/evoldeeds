@@ -10,7 +10,6 @@ import h20
 def main (modelFilename: str,
           treeFilename: str,
           alignFilename: str,
-          discretize: bool = False,
           ):
     """
     Compute the log likelihood of a tree given an alignment and a model.
@@ -19,7 +18,6 @@ def main (modelFilename: str,
         treeFilename: Newick tree file
         alignFilename: FASTA alignment file
         modelFilename: Historian-format JSON file with model parameters
-        discretize: Discretize branch lengths
     """
     with open(modelFilename, 'r') as f:
         modelJson = json.load (f)
@@ -37,12 +35,7 @@ def main (modelFilename: str,
     assert len(indelParams) == 1, "Only one indel parameter set is supported for indel model"
     indelParams = indelParams[0]
     subRate, rootProb = mixture[0]
-    if discretize:
-        discSubMatrix = likelihood.computeSubMatrixForDiscretizedTimes (subRate)
-        subMatrix = likelihood.getSubMatrixForDiscretizedBranchLengths (distanceToParent, discSubMatrix)
-        subll = likelihood.subLogLikeForMatrices (seqs, parentIndex, subMatrix, rootProb)
-    else:
-        subll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, subRate, rootProb)
+    subll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, subRate, rootProb)
     subll_total = float (jnp.sum (subll))
 
     transMat = jnp.stack ([h20.dummyRootTransitionMatrix()] + [h20.transitionMatrix(t,indelParams,alphabetSize=len(alphabet)) for t in distanceToParent[1:]], axis=0)

@@ -10,6 +10,7 @@ import logging
 
 import likelihood
 import dataset
+from optimize import optimize
 
 #jax.config.update("jax_debug_nans", True)
 
@@ -85,7 +86,7 @@ def main (modelFile: str,
     # Create loss function
     sub_model_factory = likelihood.parametricReversibleSubModel if reversible else likelihood.parametricSubModel
     ggi_model_factory = likelihood.createGGIModelFactory (sub_model_factory, nQuantiles)
-    loss = dataset.createLossFunction (data, ggi_model_factory, alphabet, includeSubs=not omitSubs, includeIndels=not omitIndels, useKM03=km03)
+    loss = dataset.createLossFunction (data, ggi_model_factory, includeSubs=not omitSubs, includeIndels=not omitIndels, useKM03=km03)
 
     # Initialize parameters of the model + optimizer.
     params = { 'indels': indelParams,
@@ -100,29 +101,7 @@ def main (modelFile: str,
         if use_jit:
             loss_value_and_grad = jax.jit (loss_value_and_grad)
 
-        optimizer = optax.adam(init_lr)
-        opt_state = optimizer.init(params)
-
-        best_ll = None
-        best_params = params
-        patience_counter = 0
-        for iter in range(max_iter):
-            ll, grads = loss_value_and_grad (params)
-            updates, opt_state = optimizer.update(grads, opt_state)
-            params = optax.apply_updates(params, updates)
-            print ("Iteration %d: loss %f" % (iter+1,ll))
-            if show_grads:
-                print (alphabet, grads)
-            inc = (best_ll - ll) / abs(best_ll) if best_ll is not None else 1
-            if best_ll is None or ll > best_ll:
-                best_params = params
-                best_ll = ll
-            if inc >= min_inc:
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    break
+        best_params = optimize (loss_value_and_grad, params, init_lr=init_lr, max_iter=max_iter, min_inc=min_inc, patience=patience, use_jit=use_jit, show_grads=show_grads)
 
         # Convert back to historian format, and output
         subRate, rootProb, indelParams = ggi_model_factory (best_params)
