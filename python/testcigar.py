@@ -30,9 +30,12 @@ def main (modelFilename: str,
 
     ct = cigartree.makeCigarTree (treeStr, alignStr)
 
-    alphabet, mixture, indelParams = likelihood.parseHistorianParams (modelJson)
+    alphabet, mixture, indelParams, *_others = likelihood.parseHistorianParams (modelJson)
     seqs, _nodeName, distanceToParent, parentIndex, transCounts = cigartree.getHMMSummaries (treeStr, alignStr, alphabet)
 
+    assert len(mixture) == 1, "Only one mixture component is supported for substitution model"
+    assert len(indelParams) == 1, "Only one indel parameter set is supported for indel model"
+    indelParams = indelParams[0]
     subRate, rootProb = mixture[0]
     if discretize:
         discSubMatrix = likelihood.computeSubMatrixForDiscretizedTimes (subRate)

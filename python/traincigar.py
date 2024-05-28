@@ -56,17 +56,7 @@ def main (modelFile: str,
     # Read model and alphabet
     with open(modelFile, 'r') as f:
         modelJson = json.load (f)
-    alphabet, mixture, indelParams = likelihood.parseHistorianParams (modelJson)
-
-    # Convert rates and probabilities to exchangeabilities and logits
-    if reversible:
-        mixture = [(likelihood.zeroDiagonal(likelihood.subMatrixToExchangeabilityMatrix(subRate,rootProb)),
-                    likelihood.probsToLogits(rootProb)) for subRate, rootProb in mixture]
-    else:
-        mixture = [(likelihood.zeroDiagonal(subRate),
-                    likelihood.probsToLogits(rootProb)) for subRate, rootProb in mixture]
-
-    indelParams = likelihood.indelModelToParams (*indelParams)
+    alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, nQuantiles = likelihood.parseHistorianParams (modelJson)
 
     # For now, only one mixture component is supported
     # As a more general solution that is a superset of Historian's model, we would like...
@@ -77,6 +67,16 @@ def main (modelFile: str,
     #     subRate, rootProb = subRateRootProb[columnType]
     # We will need a JSON format for this that is ideally backward-compatible with Historian
     assert len(mixture) == 1, "Only one mixture component is supported for substitution model"
+    assert len(indelParams) == 1, "Only one indel parameter set is supported for indel model"
+    indelParams = likelihood.indelModelToParams (*indelParams[0])
+
+    # Convert rates and probabilities to exchangeabilities and logits
+    if reversible:
+        mixture = [(likelihood.zeroDiagonal(likelihood.subMatrixToExchangeabilityMatrix(subRate,rootProb)),
+                    likelihood.probsToLogits(rootProb)) for subRate, rootProb in mixture]
+    else:
+        mixture = [(likelihood.zeroDiagonal(subRate),
+                    likelihood.probsToLogits(rootProb)) for subRate, rootProb in mixture]
 
     # Create dataset
     if dataDir is not None:
@@ -135,7 +135,7 @@ def main (modelFile: str,
 
         # Convert back to historian format, and output
         subRate, rootProb, indelParams = ggi_model_factory (best_params)
-        print (json.dumps (likelihood.toHistorianParams (alphabet, [(subRate, rootProb)], indelParams)))
+        print (json.dumps (likelihood.toHistorianParams (alphabet, [(subRate, rootProb)], [indelParams], alnTypeLogits, colTypeLogits, colShape, nQuantiles)))
     else:
         if use_jit:
             loss = jax.jit(loss)

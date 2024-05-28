@@ -211,18 +211,41 @@ def parseHistorianParams (params):
         rootProb = jnp.array([p['rootprob'].get(i,0) for i in alphabet], dtype=jnp.float32)
         subRate, rootProb = normalizeSubModel (subRate, rootProb)
         return subRate, rootProb
-    if 'mixture' in params:
-        mixture = [parseSubRate(p) for p in params['mixture']]
+    if 'mixture' in params or 'coltype' in params:
+        mixture = [parseSubRate(p) for p in params.get('mixture',params.get('coltype'))]
     else:
         mixture = [parseSubRate(params)]
-    indelParams = tuple(params.get(name,0) for name in ['insrate','delrate','insextprob','delextprob'])
-    return alphabet, mixture, indelParams
+    def parseIndelParams (cpt):
+        return tuple(cpt.get(name,0) for name in ['insrate','delrate','insextprob','delextprob'])
+    alignTypes = params.get ('aligntype', [params])
+    indelParams = [parseIndelParams(t) for t in alignTypes]
+    alnTypeLogits = jnp.array([t.get('weight',0) for t in alignTypes])   # famTypeLogits[i] \propto log P(alignType=i)
+    colTypeLogits = jnp.stack([jnp.array([t.get('coltypeweight',jnp.zeros(len(mixture))) for t in alignTypes])], axis=0)  # colTypeLogits[i,j] \propto log P(columnType=j | alignType=i)
+    colShape = jnp.stack([jnp.array([t.get('colshape',jnp.ones(len(mixture))) for t in alignTypes])], axis=0)  # colShape[i,j] = shape param for gamma distribution of colType j in alnType i (scale=shape assumed)
+    quantiles = params.get('quantiles',1)  # number of quantiles (rate classes) for column gamma distributions
+    return alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, quantiles
 
-def toHistorianParams (alphabet, mixture, indelParams):
+def toHistorianParams (alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, nQuantiles):
     def toSubRate (subRate, rootProb):
         return { 'subrate': {alphabet[i]: {alphabet[j]: float(subRate[i,j]) for j in range(len(alphabet)) if i != j} for i in range(len(alphabet))},
                  'rootprob': {alphabet[i]: float(rootProb[i]) for i in range(len(alphabet))} }
-    if len(mixture) == 1:
-        return toSubRate(*mixture[0]), {name: float(param) for name,param in zip(['insrate','delrate','insextprob','delextprob'],indelParams)}
-    else:
-        return {'mixture': [toSubRate(*m) for m in mixture]}, {name: float(param) for name,param in zip(['insrate','delrate','insextprob','delextprob'],indelParams)}
+    def toIndelParams (indelParams):
+        return {name: float(param) for name,param in zip(['insrate','delrate','insextprob','delextprob'],indelParams)}
+    nColTypes = len(mixture)
+    nAlignTypes = len(alnTypeLogits)
+    assert alnTypeLogits.shape == (nAlignTypes,)
+    assert colTypeLogits.shape == (nAlignTypes,nColTypes)
+    assert colShape.shape == (nAlignTypes,nColTypes)
+    # use backwardly-compatible format if possible, so Historian can read it
+    if nAlignTypes == 1 and nQuantiles == 1:
+        if nColTypes == 1:
+            return {**toSubRate(*mixture[0]), **toIndelParams(indelParams[0])}
+        else:
+            return {'mixture': [toSubRate(*m) for m in mixture],
+                     **toIndelParams(indelParams[0])}
+    return {'coltype': [toSubRate(*m) for m in mixture],
+            'aligntype': [{'weight': float(alnTypeLogits[i]),
+                           'colshape': [float(s) for s in colShape[i,:]],
+                           'coltypeweight': [float(w) for w in colTypeLogits[i,:]],
+                           **toIndelParams(indelParams[i])} for i in range(nAlignTypes)],
+            'quantiles': nQuantiles}
