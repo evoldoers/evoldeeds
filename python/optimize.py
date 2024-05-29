@@ -30,7 +30,7 @@ def optimize_generic (take_step, params, prefix="Iteration ", max_iter=1000, min
             patience_counter = 0
         else:
             patience_counter += 1
-        change_desc = "first" if best_loss is None else "better" if inc >= min_inc else "underwhelming" if loss < best_loss else "same" if loss == best_loss else "stalled" if loss == last_loss else "rallying" if loss < last_loss else "worse"
+        change_desc = "first" if best_loss is None else "better" if inc >= min_inc else "underwhelming" if loss < best_loss else "same" if loss == best_loss else "stalled" if loss == last_loss else "wobbly" if loss < last_loss else "worse"
         if patience_counter >= patience/2:
             change_desc += "; stopping" + ((" in %d" % (patience - patience_counter)) if patience_counter < patience else "")
         if verbose:
