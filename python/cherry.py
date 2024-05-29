@@ -43,8 +43,7 @@ def pickCherries (parentIndex, distanceToParent):
                             yield (i,j), dij
                         else:
                             available[j] = False  # remove duplicates
-    lp = list(leafPairs())
-    lp.sort (key=lambda x: x[1])
+    lp = sorted(leafPairs(), key=lambda x: x[1])
     # return a unique partition of nonduplicate leaves into pairs with their distances, preferring closer pairs
     def cherryPairs():
         for (i,j), dij in lp:
@@ -128,9 +127,10 @@ def getPosteriorCounts (dataset, params, model_factory, logBase=defaultLogBase, 
             
             count_by_t[t] = subRateCount, transCount
 
-    ts = np.array (sorted(count_by_t.keys()))  # (nDiscretizedTimes,)
-    subRateCount = np.stack ([count_by_t[t][0] for t in ts], axis=0)  # (nDiscretizedTimes, nQuantiles, nColTypes, alphabetSize, alphabetSize)
-    transCount = np.stack ([count_by_t[t][1] for t in ts], axis=0)  # (nDiscretizedTimes, nAlignTypes, 3, 3)
+    dts = sorted(count_by_t.keys())
+    ts = undiscretizeTime (np.array (dts))  # (nDiscretizedTimes,)
+    subRateCount = np.stack ([count_by_t[dt][0] for dt in dts], axis=0)  # (nDiscretizedTimes, nQuantiles, nColTypes, alphabetSize, alphabetSize)
+    transCount = np.stack ([count_by_t[dt][1] for dt in dts], axis=0)  # (nDiscretizedTimes, nAlignTypes, 3, 3)
 
     return a_count, at_count, ts, rootCount, subRateCount, transCount, ll
 
@@ -149,22 +149,24 @@ def createCompositeIndelLoss (model_factory, **kwargs):
         alphabetSize = subRate.shape[-1]
         loss = 0.
         for a in range(nAlignTypes):
-            loss -= jnp.sum (likelihood.transLogLike (transCount[:,a,:,:], ts, indelParams, alphabetSize=alphabetSize, **kwargs))
+            loss -= jnp.sum (likelihood.transLogLike (transCount[:,a,:,:], ts, indelParams[a], alphabetSize=alphabetSize, **kwargs))
         return loss
     return compositeIndelLoss
 
-jit_value_and_grad = lambda f: jax.jit (jax.value_and_grad (f))
-def optimizeByCompositeEM (dataset, model_factory, params, value_and_grad=jit_value_and_grad, useKM03=False, init_lr=None, show_grads=None, **kwargs):
+def optimizeByCompositeEM (dataset, model_factory, params, use_jit=True, useKM03=False, init_lr=None, show_grads=None, **kwargs):
+    jit = jax.jit if use_jit else lambda f: f
+    value_and_grad = lambda f: jit (jax.value_and_grad (f))
+    getPosteriorCounts_jit = jit (getPosteriorCounts)
     sub_loss_value_and_grad = value_and_grad (createCompositeSubLoss (model_factory))
     trans_loss_value_and_grad = value_and_grad (createCompositeIndelLoss (model_factory, useKM03=useKM03))
     optax_args = dict((k,v) for k,v in [('init_lr',init_lr),('show_grads',show_grads)] if v is not None)
     def take_step (params, nStep):
-        a_count, at_count, ts, rootCount, subRateCount, transCount, ll = getPosteriorCounts (dataset, params, model_factory, useKM03=useKM03)
+        a_count, at_count, ts, rootCount, subRateCount, transCount, ll = getPosteriorCounts_jit(dataset, params, model_factory, useKM03=useKM03)
         sub_loss_vg_bound = lambda params: sub_loss_value_and_grad (params, ts, rootCount, subRateCount)
         trans_loss_vg_bound = lambda params: trans_loss_value_and_grad (params, ts, transCount)
-        params, _sub_ll = optimize (sub_loss_vg_bound, params, prefix=f"EM step {nStep+1}, substitution params: ", **optax_args, **kwargs)
-        params, _trans_ll = optimize (trans_loss_vg_bound, params, prefix=f"EM step {nStep+1}, indel params: ", **optax_args, **kwargs)
+        params, _sub_ll = optimize (sub_loss_vg_bound, params, prefix=f"EM step {nStep+1}, substitution params iteration ", **optax_args, **kwargs)
+        params, _trans_ll = optimize (trans_loss_vg_bound, params, prefix=f"EM step {nStep+1}, indel params iteration ", **optax_args, **kwargs)
         params['alntypelogits'] = jnp.log (a_count / jnp.sum(a_count))
         params['coltypelogits'] = jnp.log (at_count / jnp.sum(at_count,axis=-1,keepdims=True))
         return params, -ll
-    return optimize_generic (take_step, params, **kwargs)
+    return optimize_generic (take_step, params, prefix="EM step ", **kwargs)

@@ -91,9 +91,7 @@ def main (modelFile: str,
     ggi_model_factory = likelihood.createGGIModelFactory (sub_model_factory, nQuantiles)
     loss = dataset.createLossFunction (data, ggi_model_factory, includeSubs=not omitSubs, includeIndels=not omitIndels, useKM03=km03)
 
-    # Functors
-    optional_jit = jax.jit if use_jit else lambda f: f
-    value_and_grad = lambda f: optional_jit (jax.value_and_grad (f))
+    jit = jax.jit if use_jit else lambda f: f
 
     # Initialize parameters of the model + optimizer.
     params = { 'indels': indelParams,
@@ -106,16 +104,16 @@ def main (modelFile: str,
     if train:
         opt_args = {'init_lr':init_lr, 'max_iter':max_iter, 'min_inc':min_inc, 'patience':patience, 'show_grads':show_grads}
         if cherry:
-            best_params = optimizeByCompositeEM (data, ggi_model_factory, params, value_and_grad=value_and_grad, useKM03=km03, **opt_args)
+            best_params, best_ll = optimizeByCompositeEM (data, ggi_model_factory, params, use_jit=use_jit, useKM03=km03, **opt_args)
         else:
-            loss_value_and_grad = value_and_grad (loss)
-            best_params = optimize (loss_value_and_grad, params, **opt_args)
+            loss_value_and_grad = jit (jax.value_and_grad (loss))
+            best_params, best_ll = optimize (loss_value_and_grad, params, **opt_args)
 
         # Convert back to historian format, and output
         subRate, rootProb, indelParams = ggi_model_factory (best_params)
         print (json.dumps (likelihood.toHistorianParams (alphabet, [(subRate, rootProb)], [indelParams], alnTypeLogits, colTypeLogits, colShape, nQuantiles)))
     else:
-        loss = optional_jit(loss)
+        loss = jit(loss)
         ll = loss(params)
         print("Loss (negative log-likelihood): %f" % ll)
 
