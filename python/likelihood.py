@@ -31,6 +31,8 @@ def subLogLike (alignment, distanceToParent, parentIndex, subRate, rootProb):
     return subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb)
 
 def transLogLike (transCounts, distanceToParent, indelParams, alphabetSize = 20, useKM03 = False):
+    nRows = distanceToParent.shape[0]
+    assert transCounts.shape == (nRows, 3, 3)
     transMats = computeTransMatForTimes (distanceToParent, indelParams, alphabetSize=alphabetSize, useKM03=useKM03)
     return transLogLikeForTransMats (transCounts, transMats)
 
@@ -80,7 +82,7 @@ def subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb, maxChunk
     tokenLookup = jnp.concatenate([jnp.ones(A)[None,:],jnp.eye(A)])
     likelihood = tokenLookup[alignment + 1]  # (R,C,A)
     if len(H) > 0:
-        likelihood = jnp.repeat (likelihood[None,...], jnp.prod(jnp.array(H)), axis=0).reshape(*H,R,C,A)
+        likelihood += jnp.zeros((*H,R,C,A))
     logNorm = jnp.zeros((*H,C))  # (*H,C)
     # Compute log-likelihood for all columns in parallel by iterating over nodes in postorder
     for child in range(R-1,0,-1):
@@ -206,29 +208,33 @@ def parseHistorianParams (params):
     quantiles = params.get('quantiles',1)  # number of quantiles (rate classes) for column gamma distributions
     return alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, quantiles
 
-def toHistorianParams (alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, nQuantiles):
-    def toSubRate (shape, subRate, rootProb):
-        return { 'subrate': {alphabet[i]: {alphabet[j]: float(subRate[i,j]) for j in range(len(alphabet)) if i != j} for i in range(len(alphabet))},
-                 'rootprob': {alphabet[i]: float(rootProb[i]) for i in range(len(alphabet))},
-                 'shape': shape }
-    def toIndelParams (indelParams):
+def toHistorianParams (alphabet, params, sub_model_factory, nQuantiles):
+    def toSubRate (shape, subParams):
+        subRate, rootProb = sub_model_factory(subParams['subrate'], subParams['rootlogits'])
+        json = { 'subrate': {alphabet[i]: {alphabet[j]: float(subRate[i,j]) for j in range(len(alphabet)) if i != j} for i in range(len(alphabet))},
+                 'rootprob': {alphabet[i]: float(rootProb[i]) for i in range(len(alphabet))} }
+        if shape is not None:
+            json['shape'] = float(shape)
+        return json
+    def toIndelParams (indelParams_logits):
+        indelParams = parametricIndelModel(*indelParams_logits)
         return {name: float(param) for name,param in zip(['insrate','delrate','insextprob','delextprob'],indelParams)}
-    nColTypes = len(mixture)
-    nAlignTypes = len(alnTypeLogits)
-    assert alnTypeLogits.shape == (nAlignTypes,)
-    assert colTypeLogits.shape == (nAlignTypes,nColTypes)
-    assert colShape.shape == (nColTypes,)
+    nColTypes, nAlignTypes = params['coltypelogits'].shape
     # use backwardly-compatible format if possible, so Historian can read it
     if nAlignTypes == 1 and nQuantiles == 1:
         if nColTypes == 1:
-            return {**toSubRate(*mixture[0]), 'shape': colShape[0], **toIndelParams(indelParams[0])}
+            json = {**toSubRate(None, params['subs'][0]),
+                    **toIndelParams(params['indels'][0])}
         else:
-            return {'mixture': [toSubRate(colShape[n],*mixture[n]) for n in range(nColTypes)],
-                     **toIndelParams(indelParams[0])}
-    alnTypeProbs = jax.nn.softmax(alnTypeLogits)
-    colTypeProbs = jax.nn.softmax(colTypeLogits, axis=-1)
-    return {'coltype': [toSubRate(colShape[n],*mixture[n]) for n in range(nColTypes)],
-            'aligntype': [{'weight': float(alnTypeProbs[i]),
-                           'coltypeweight': [float(w) for w in colTypeProbs[i,:]],
-                           **toIndelParams(indelParams[i])} for i in range(nAlignTypes)],
-            'quantiles': nQuantiles}
+            json = {'coltype': [toSubRate(None, params['subs'][n]) for n in range(nColTypes)],
+                    **toIndelParams(params['indels'][0])}
+    else:
+        alnTypeProbs = jax.nn.softmax(params['alntypelogits'])
+        colTypeProbs = jax.nn.softmax(params['coltypelogits'], axis=-1)
+        json = {'coltype': [toSubRate(params['colshape'][n],params['subs'][n]) for n in range(nColTypes)],
+                'aligntype': [{'weight': float(alnTypeProbs[i]),
+                            'coltypeweight': [float(w) for w in colTypeProbs[i,:]],
+                            **toIndelParams(params['indels'][i])} for i in range(nAlignTypes)],
+                'quantiles': nQuantiles}
+    json['alphabet'] = alphabet
+    return json

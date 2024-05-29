@@ -111,7 +111,7 @@ def main (modelFile: str,
 
         # Convert back to historian format, and output
         subRate, rootProb, indelParams, *_rest = ggi_model_factory (best_params)
-        print (json.dumps (likelihood.toHistorianParams (alphabet, [(subRate, rootProb)], [indelParams], alnTypeLogits, colTypeLogits, colShape, nQuantiles)))
+        print (json.dumps (likelihood.toHistorianParams (alphabet, params, sub_model_factory, nQuantiles)))
     else:
         loss = jit(loss)
         ll = loss(params)

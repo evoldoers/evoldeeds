@@ -1,4 +1,4 @@
-from functools import partial
+import logging
 
 import numpy as np
 
@@ -9,6 +9,8 @@ import einops
 
 import cigartree
 import likelihood
+import h20
+import km03
 from optimize import optimize, optimize_generic
 
 def pickCherries (parentIndex, distanceToParent):
@@ -82,7 +84,7 @@ def discretizeTime (t, logBase=defaultLogBase):
 def undiscretizeTime (t, logBase=defaultLogBase):
     return jnp.power (logBase, t)
 
-def getPosteriorCounts (dataset, params, model_factory, logBase=defaultLogBase, **kwargs):
+def getPosteriorCounts (dataset, params, model_factory, getPosteriorWeights=getPosteriorWeights, logBase=defaultLogBase, **kwargs):
     model = model_factory (params)
     subRate, _rootProb, _indelParams, _alnTypeWeight, colTypeWeight, colQuantiles = model
     nAlignTypes, nColTypes = colTypeWeight.shape
@@ -139,32 +141,40 @@ def createCompositeSubLoss (model_factory):
         subRate, rootProb, _indelParams, _alnTypeWeight, _colTypeWeight, _colQuantiles = model_factory (params)
         subMatrix = likelihood.computeSubMatrixForTimes (ts, subRate)  # (nQuantiles, nColTypes, nDiscretizedTimes, alphabetSize, alphabetSize)
         subMatrix = einops.rearrange (subMatrix, 'q c t i j -> t q c i j')
-        return -jnp.sum(subRateCount * jnp.log(subMatrix) + rootCount * jnp.log(rootProb))
+        return -jnp.sum(subRateCount * jnp.log(subMatrix)) - jnp.sum(rootCount * jnp.log(rootProb))
     return compositeSubLoss
 
-def createCompositeIndelLoss (model_factory, **kwargs):
+def createCompositeIndelLoss (model_factory, useKM03=False, **kwargs):
+    transitionMatrix = km03.transitionMatrix if useKM03 else h20.transitionMatrix
     def compositeIndelLoss (params, ts, transCount):
         subRate, _rootProb, indelParams, alnTypeWeight, _colTypeWeight, _colQuantiles = model_factory (params)
         nAlignTypes = alnTypeWeight.shape[0]
         alphabetSize = subRate.shape[-1]
         loss = 0.
         for a in range(nAlignTypes):
-            loss -= jnp.sum (likelihood.transLogLike (transCount[:,a,:,:], ts, indelParams[a], alphabetSize=alphabetSize, **kwargs))
+            logTransMat = jnp.log (jnp.stack ([transitionMatrix(t,indelParams[a],alphabetSize=alphabetSize) for t in ts], axis=0))
+            loss -= jnp.sum (transCount[:,a,:,:] * logTransMat)
         return loss
     return compositeIndelLoss
 
 def optimizeByCompositeEM (dataset, model_factory, params, use_jit=True, useKM03=False, init_lr=None, show_grads=None, **kwargs):
-    jit = jax.jit if use_jit else lambda f: f
-    value_and_grad = lambda f: jit (jax.value_and_grad (f))
-    getPosteriorCounts_jit = jit (getPosteriorCounts)
+    if use_jit:
+        value_and_grad = lambda f: jax.jit (jax.value_and_grad (f))
+        getPosteriorWeights_jit = jax.jit (getPosteriorWeights, static_argnames=('alphabetSize', 'useKM03'))
+    else:
+        value_and_grad = jax.value_and_grad
+        getPosteriorWeights_jit = getPosteriorWeights
     sub_loss_value_and_grad = value_and_grad (createCompositeSubLoss (model_factory))
     trans_loss_value_and_grad = value_and_grad (createCompositeIndelLoss (model_factory, useKM03=useKM03))
     optax_args = dict((k,v) for k,v in [('init_lr',init_lr),('show_grads',show_grads)] if v is not None)
     def take_step (params, nStep):
-        a_count, at_count, ts, rootCount, subRateCount, transCount, ll = getPosteriorCounts_jit(dataset, params, model_factory, useKM03=useKM03)
+        a_count, at_count, ts, rootCount, subRateCount, transCount, ll = getPosteriorCounts(dataset, params, model_factory, getPosteriorWeights=getPosteriorWeights_jit, useKM03=useKM03)
+        logging.warning("Total counts: root=%f, sub=%f, trans=%f" % (jnp.sum(rootCount), jnp.sum(subRateCount), jnp.sum(transCount)))
         sub_loss_vg_bound = lambda params: sub_loss_value_and_grad (params, ts, rootCount, subRateCount)
         trans_loss_vg_bound = lambda params: trans_loss_value_and_grad (params, ts, transCount)
         params, _sub_ll = optimize (sub_loss_vg_bound, params, prefix=f"EM step {nStep+1}, substitution params iteration ", **optax_args, **kwargs)
+        #*stuff, new_a_ll = getPosteriorWeights_jit (dataset[0], model_factory(params))
+        #logging.warning('a_ll = %f, new_a_ll = %f' % (ll,new_a_ll))
         params, _trans_ll = optimize (trans_loss_vg_bound, params, prefix=f"EM step {nStep+1}, indel params iteration ", **optax_args, **kwargs)
         params['alntypelogits'] = jnp.log (a_count / jnp.sum(a_count))
         params['coltypelogits'] = jnp.log (at_count / jnp.sum(at_count,axis=-1,keepdims=True))
