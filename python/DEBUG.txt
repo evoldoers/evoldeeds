@@ -1,3 +1,0 @@
-Remaining problems:
-1. Counts seem a bit off. Why do total transition counts not match total root counts (+/- number of rows)?
-2. Parameters do not seem to be updating; training paramsA->paramsB then running with paramsB yields same results as paramsA.

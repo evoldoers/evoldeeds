@@ -62,17 +62,18 @@ def getPosteriorWeights (data, model, alphabetSize=20, useKM03=False):
     logQuantiles = jnp.log(len(colQuantiles))
     colTypeLogWeight = jnp.log(colTypeWeight)
     alnTypeLogWeight = jnp.log(alnTypeWeight)
+    colMask = jnp.where(jnp.all(seqs < 0, axis=0), 0, 1)  # (nCols,)
     qtc_ll = likelihood.subLogLike (seqs, distanceToParent, parentIndex, subRate, rootProb)  # (nQuantiles, nColTypes, nCols)
     aqtc_ll = qtc_ll[None,...] + colTypeLogWeight[:,None,:,None] - logQuantiles  # (nAlignTypes, nQuantiles, nColTypes, nCols)
     atc_ll = logsumexp(aqtc_ll,axis=1)  # (nAlignTypes, nColTypes, nCols)
-    at_ll = jnp.sum(atc_ll,axis=-1)  # (nAlignTypes, nColTypes)
+    at_ll = jnp.einsum('atc->at', atc_ll)  # (nAlignTypes, nColTypes)
     a_ll = logsumexp(at_ll,axis=-1)  # (nAlignTypes,)
     a_ll += jnp.array ([jnp.sum (likelihood.transLogLike (transCounts, distanceToParent, p, alphabetSize=alphabetSize, useKM03=useKM03)) for p in indelParams])  # (nAlignTypes,)
     a_ll += alnTypeLogWeight  # (nAlignTypes,)
     ll = jnp.sum(a_ll)
     a_pp = jax.nn.softmax(a_ll)  # (nAlignTypes,)
     atc_pp = jax.nn.softmax(atc_ll,axis=1)  # (nAlignTypes, nColTypes, nCols).  atc_pp[a,t,c] = P(column c has type t given alignment type is a)
-    at_count = jnp.einsum ('atc->at', atc_pp)  # (nAlignTypes, nCols).  at_count[a,c] = E[number of type c columns for alignment type a]
+    at_count = jnp.einsum ('atc,c->at', atc_pp, colMask)  # (nAlignTypes, nColTypes).  at_count[a,c] = E[number of type c columns for alignment type a]
     tc_pp = jnp.einsum ('a,atc->tc', a_pp, atc_pp)  # (nColTypes, nCols).  tc_pp[t,c] = P(column c has type t)
     qtc_pp = tc_pp[None,...] * jax.nn.softmax(qtc_ll,axis=0)  # (nQuantiles, nColTypes, nCols).  qtc_pp[q,t,c] = P(column c has type t and rate quantile q)
     return a_pp, at_count, qtc_pp, ll
@@ -95,6 +96,10 @@ def getPosteriorCounts (dataset, params, model_factory, getPosteriorWeights=getP
     rootCount = np.zeros ((nQuantiles, nColTypes, alphabetSize))
     count_by_t = {}  # count_by_t[discretizedTime] = (subRateCount, transCounts)
     ll = 0.
+    nTransitions = 0
+    nPairs = 0
+    nChars = 0
+    nAlignedChars = 0
     for data in dataset:
         seqs, parentIndex, distanceToParent, transCounts = data
         _nRows, nCols = seqs.shape
@@ -103,11 +108,13 @@ def getPosteriorCounts (dataset, params, model_factory, getPosteriorWeights=getP
         at_count += at_c
         ll += a_ll
         for (i,j), dij in pickCherries (parentIndex, distanceToParent):
+            nPairs += 1
             t = discretizeTime (dij, logBase=logBase).item()
             subRateCount, transCount = count_by_t.get(t, (np.zeros((nQuantiles, nColTypes, alphabetSize, alphabetSize)),
                                                           np.zeros((nAlignTypes, 3, 3))))
 
             _pairGapSize, pairTransCount = cigartree.countGapSizesInTokenizedPairwiseAlignment (seqs[i,:], seqs[j,:])
+            nTransitions += jnp.sum(pairTransCount)
             pairTransCount = (pairTransCount + pairTransCount.transpose()) / 2
             for a in range(nAlignTypes):
                 transCount[a,:,:] += pairTransCount * a_pp[a]
@@ -115,6 +122,12 @@ def getPosteriorCounts (dataset, params, model_factory, getPosteriorWeights=getP
             for col in range(nCols):
                 ci = seqs[i,col]
                 cj = seqs[j,col]
+                if ci >= 0:
+                    nChars += 1
+                if cj >= 0:
+                    nChars += 1
+                if ci >= 0 and cj >= 0:
+                    nAlignedChars += 1
                 if ci >= 0 or cj >= 0:
                     for quantile in range(nQuantiles):
                         for colType in range(nColTypes):
@@ -133,6 +146,8 @@ def getPosteriorCounts (dataset, params, model_factory, getPosteriorWeights=getP
     ts = undiscretizeTime (np.array (dts))  # (nDiscretizedTimes,)
     subRateCount = np.stack ([count_by_t[dt][0] for dt in dts], axis=0)  # (nDiscretizedTimes, nQuantiles, nColTypes, alphabetSize, alphabetSize)
     transCount = np.stack ([count_by_t[dt][1] for dt in dts], axis=0)  # (nDiscretizedTimes, nAlignTypes, 3, 3)
+
+#    logging.warning ("nPairs=%d, nChars=%d, sum(rootCount)=%f, nAlignedChars=%d, sum(subRateCount)=%f, nTransitions=%d, sum(transCount)=%f" % (nPairs, nChars, jnp.sum(rootCount), nAlignedChars, jnp.sum(subRateCount), nTransitions, jnp.sum(transCount)))
 
     return a_count, at_count, ts, rootCount, subRateCount, transCount, ll
 
@@ -157,7 +172,7 @@ def createCompositeIndelLoss (model_factory, useKM03=False, **kwargs):
         return loss
     return compositeIndelLoss
 
-def optimizeByCompositeEM (dataset, model_factory, params, use_jit=True, useKM03=False, init_lr=None, show_grads=None, **kwargs):
+def optimizeByCompositeEM (dataset, model_factory, params, use_jit=True, useKM03=False, init_lr=None, show_grads=None, verbosity=1, **kwargs):
     if use_jit:
         value_and_grad = lambda f: jax.jit (jax.value_and_grad (f))
         getPosteriorWeights_jit = jax.jit (getPosteriorWeights, static_argnames=('alphabetSize', 'useKM03'))
@@ -169,14 +184,13 @@ def optimizeByCompositeEM (dataset, model_factory, params, use_jit=True, useKM03
     optax_args = dict((k,v) for k,v in [('init_lr',init_lr),('show_grads',show_grads)] if v is not None)
     def take_step (params, nStep):
         a_count, at_count, ts, rootCount, subRateCount, transCount, ll = getPosteriorCounts(dataset, params, model_factory, getPosteriorWeights=getPosteriorWeights_jit, useKM03=useKM03)
-        logging.warning("Total counts: root=%f, sub=%f, trans=%f" % (jnp.sum(rootCount), jnp.sum(subRateCount), jnp.sum(transCount)))
         sub_loss_vg_bound = lambda params: sub_loss_value_and_grad (params, ts, rootCount, subRateCount)
         trans_loss_vg_bound = lambda params: trans_loss_value_and_grad (params, ts, transCount)
-        params, _sub_ll = optimize (sub_loss_vg_bound, params, prefix=f"EM step {nStep+1}, substitution params iteration ", **optax_args, **kwargs)
+        params, _sub_ll = optimize (sub_loss_vg_bound, params, prefix=f"EM step {nStep+1}, substitution params iteration ", verbose=verbosity>1, **optax_args, **kwargs)
         #*stuff, new_a_ll = getPosteriorWeights_jit (dataset[0], model_factory(params))
         #logging.warning('a_ll = %f, new_a_ll = %f' % (ll,new_a_ll))
-        params, _trans_ll = optimize (trans_loss_vg_bound, params, prefix=f"EM step {nStep+1}, indel params iteration ", **optax_args, **kwargs)
+        params, _trans_ll = optimize (trans_loss_vg_bound, params, prefix=f"EM step {nStep+1}, indel params iteration ", verbose=verbosity>1, **optax_args, **kwargs)
         params['alntypelogits'] = jnp.log (a_count / jnp.sum(a_count))
         params['coltypelogits'] = jnp.log (at_count / jnp.sum(at_count,axis=-1,keepdims=True))
         return params, -ll
-    return optimize_generic (take_step, params, prefix="EM step ", **kwargs)
+    return optimize_generic (take_step, params, prefix="EM step ", verbose=verbosity>0, **kwargs)

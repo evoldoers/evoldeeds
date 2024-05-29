@@ -1,3 +1,4 @@
+from copy import deepcopy
 import logging
 
 import jax
@@ -17,24 +18,28 @@ def optimize (loss_value_and_grad, params, init_lr=1e-3, show_grads=False, **kwa
         return params, loss
     return optimize_generic (take_step, params, **kwargs)
 
-def optimize_generic (take_step, params, prefix="Iteration ", max_iter=1000, min_inc=1e-6, patience=10):
+def optimize_generic (take_step, params, prefix="Iteration ", max_iter=1000, min_inc=1e-6, patience=10, verbose=True):
     best_loss = None
-    best_params = params
+    best_params = deepcopy(params)
     patience_counter = 0
+    last_loss = None
     for iter in range(max_iter):
         next_params, loss = take_step (params, iter)
         inc = (best_loss - loss) / abs(best_loss) if best_loss is not None else 1
-        change_desc = "first" if best_loss is None else "better" if inc >= min_inc else "negligibly better" if loss < best_loss else "worse" if loss > best_loss else "same"
-        logging.warning ("%s%d: loss %f (%s)" % (prefix,iter+1,loss,change_desc))
+        change_desc = "first" if best_loss is None else "better" if inc >= min_inc else "negligibly better" if loss < best_loss else "same" if loss == best_loss else "less worse" if loss < last_loss else "worse"
+        if verbose:
+            logging.warning ("%s%d: loss %f (%s)" % (prefix,iter+1,loss,change_desc))
         if best_loss is None or loss < best_loss:
-            best_params = params
+            best_params = deepcopy(params)
             best_loss = loss
         params = next_params
+        last_loss = loss
         if inc >= min_inc:
             patience_counter = 0
         else:
             patience_counter += 1
             if patience_counter >= patience:
                 break
-    logging.warning ("%s%d: best loss %f" % (prefix,iter+1,best_loss))
+    if verbose:
+        logging.warning ("%s%d: best loss %f" % (prefix,iter+1,best_loss))
     return best_params, best_loss
