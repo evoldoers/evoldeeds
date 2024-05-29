@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import expm
 
-import tensorflow_probability.substrates.jax as tfp
 from tensorflow_probability.substrates.jax.distributions import Gamma
 
 import h20
@@ -174,6 +173,7 @@ def createGGIModelFactory (subModelFactory, nQuantiles):
         colGammas = [Gamma(s,s) for s in colShape]
         quantileProbs = (2*jnp.arange(nQuantiles) + 1) / (2*nQuantiles)
         colQuantiles = jnp.stack ([jnp.array ([g.quantile(p) for g in colGammas]) for p in quantileProbs], axis=0)  # (nQuantiles,nColTypes)
+        colQuantiles /= jnp.mean(colQuantiles,axis=0,keepdims=True)  # maintain E[rate]=1
         subRate = jnp.einsum ('cij,qc->qcij', subRate, colQuantiles)  # (nQuantiles,nColTypes,A,A)
         rootProb = jnp.stack([m[1] for m in mixture], axis=0)  # (nColTypes,A)
         rootProb = jnp.repeat (rootProb[None,:,:], nQuantiles, axis=0)  # (nQuantiles,nColTypes,A)
@@ -203,7 +203,7 @@ def parseHistorianParams (params):
     indelParams = [parseIndelParams(t) for t in alignTypes]
     alnTypeLogits = jnp.log(jnp.array([t.get('weight',1) for t in alignTypes], dtype=jnp.float32))   # alnTypeLogits[i] \propto log P(alignType=i)
     colTypeLogits = jnp.log(jnp.stack([jnp.array(t.get('coltypeweight',jnp.ones(len(mixture), dtype=jnp.float32))) for t in alignTypes], axis=0))  # colTypeLogits[i,j] \propto log P(columnType=j | alignType=i)
-    quantiles = params.get('quantiles',2)  # number of quantiles (rate classes) for column gamma distributions
+    quantiles = params.get('quantiles',1)  # number of quantiles (rate classes) for column gamma distributions
     return alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, quantiles
 
 def toHistorianParams (alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, nQuantiles):

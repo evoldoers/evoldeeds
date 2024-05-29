@@ -63,7 +63,6 @@ def createLossFunction (dataset, model_factory, includeSubs = True, includeIndel
                 trans_ll = jnp.array ([jnp.sum (likelihood.transLogLike (transCounts, distanceToParent, p, alphabetSize=alphabetSize, useKM03=useKM03)) for p in indelParams])  # (nAlignTypes,)
             else:
                 trans_ll = 0.
-            jax.debug.print("sub_ll={} trans_ll={}", sub_ll, trans_ll)
             l_total -= logsumexp(alnTypeLogWeight + trans_ll + sub_ll)
         return l_total
     return loss

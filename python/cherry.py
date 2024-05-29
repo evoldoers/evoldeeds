@@ -9,6 +9,7 @@ import einops
 
 import cigartree
 import likelihood
+from optimize import optimize, optimize_generic
 
 def pickCherries (parentIndex, distanceToParent):
     assert len(parentIndex) == len(distanceToParent), "Parent index and distance to parent must have the same length"
@@ -42,7 +43,8 @@ def pickCherries (parentIndex, distanceToParent):
                             yield (i,j), dij
                         else:
                             available[j] = False  # remove duplicates
-    lp = list(leafPairs()).sort (key=lambda x: x[1])
+    lp = list(leafPairs())
+    lp.sort (key=lambda x: x[1])
     # return a unique partition of nonduplicate leaves into pairs with their distances, preferring closer pairs
     def cherryPairs():
         for (i,j), dij in lp:
@@ -52,7 +54,6 @@ def pickCherries (parentIndex, distanceToParent):
                 yield (i,j), dij
     return cherryPairs()
 
-@jax.jit
 def getPosteriorWeights (data, model, alphabetSize=20, useKM03=False):
     seqs, parentIndex, distanceToParent, transCounts = data
     subRate, rootProb, indelParams, alnTypeWeight, colTypeWeight, colQuantiles = model
@@ -67,12 +68,13 @@ def getPosteriorWeights (data, model, alphabetSize=20, useKM03=False):
     a_ll = logsumexp(at_ll,axis=-1)  # (nAlignTypes,)
     a_ll += jnp.array ([jnp.sum (likelihood.transLogLike (transCounts, distanceToParent, p, alphabetSize=alphabetSize, useKM03=useKM03)) for p in indelParams])  # (nAlignTypes,)
     a_ll += alnTypeLogWeight  # (nAlignTypes,)
+    ll = jnp.sum(a_ll)
     a_pp = jax.nn.softmax(a_ll)  # (nAlignTypes,)
     atc_pp = jax.nn.softmax(atc_ll,axis=1)  # (nAlignTypes, nColTypes, nCols).  atc_pp[a,t,c] = P(column c has type t given alignment type is a)
     at_count = jnp.einsum ('atc->at', atc_pp)  # (nAlignTypes, nCols).  at_count[a,c] = E[number of type c columns for alignment type a]
     tc_pp = jnp.einsum ('a,atc->tc', a_pp, atc_pp)  # (nColTypes, nCols).  tc_pp[t,c] = P(column c has type t)
     qtc_pp = tc_pp[None,...] * jax.nn.softmax(qtc_ll,axis=0)  # (nQuantiles, nColTypes, nCols).  qtc_pp[q,t,c] = P(column c has type t and rate quantile q)
-    return a_pp, at_count, qtc_pp
+    return a_pp, at_count, qtc_pp, ll
 
 defaultLogBase = 10**.1
 def discretizeTime (t, logBase=defaultLogBase):
@@ -91,14 +93,16 @@ def getPosteriorCounts (dataset, params, model_factory, logBase=defaultLogBase, 
     at_count = np.zeros ((nAlignTypes, nColTypes))
     rootCount = np.zeros ((nQuantiles, nColTypes, alphabetSize))
     count_by_t = {}  # count_by_t[discretizedTime] = (subRateCount, transCounts)
+    ll = 0.
     for data in dataset:
         seqs, parentIndex, distanceToParent, transCounts = data
         _nRows, nCols = seqs.shape
-        a_pp, at_c, qtc_pp = getPosteriorWeights (data, model, **kwargs)
+        a_pp, at_c, qtc_pp, a_ll = getPosteriorWeights (data, model, **kwargs)
         a_count += a_pp
         at_count += at_c
+        ll += a_ll
         for (i,j), dij in pickCherries (parentIndex, distanceToParent):
-            t = discretizeTime (dij, logBase=logBase)
+            t = discretizeTime (dij, logBase=logBase).item()
             subRateCount, transCount = count_by_t.get(t, (np.zeros((nQuantiles, nColTypes, alphabetSize, alphabetSize)),
                                                           np.zeros((nAlignTypes, 3, 3))))
 
@@ -119,23 +123,23 @@ def getPosteriorCounts (dataset, params, model_factory, logBase=defaultLogBase, 
                             if cj >= 0:
                                 rootCount[quantile,colType,cj] += count
                             if ci >= 0 and cj >= 0:
-                                subRateCount[colType,ci,cj] += count
-                                subRateCount[colType,cj,ci] += count
+                                subRateCount[quantile,colType,ci,cj] += count
+                                subRateCount[quantile,colType,cj,ci] += count
             
             count_by_t[t] = subRateCount, transCount
 
-    ts = sorted(count_by_t.keys())  # (nDiscretizedTimes,)
-    subRateCount = np.stack ([count_by_t[t][1] for t in ts], axis=0)  # (nDiscretizedTimes, nQuantiles, nColTypes, alphabetSize, alphabetSize)
-    transCount = np.stack ([count_by_t[t][2] for t in ts], axis=0)  # (nDiscretizedTimes, nAlignTypes, 3, 3)
+    ts = np.array (sorted(count_by_t.keys()))  # (nDiscretizedTimes,)
+    subRateCount = np.stack ([count_by_t[t][0] for t in ts], axis=0)  # (nDiscretizedTimes, nQuantiles, nColTypes, alphabetSize, alphabetSize)
+    transCount = np.stack ([count_by_t[t][1] for t in ts], axis=0)  # (nDiscretizedTimes, nAlignTypes, 3, 3)
 
-    return a_count, at_count, ts, rootCount, subRateCount, transCount
+    return a_count, at_count, ts, rootCount, subRateCount, transCount, ll
 
 def createCompositeSubLoss (model_factory):
     def compositeSubLoss (params, ts, rootCount, subRateCount):
         subRate, rootProb, _indelParams, _alnTypeWeight, _colTypeWeight, _colQuantiles = model_factory (params)
         subMatrix = likelihood.computeSubMatrixForTimes (ts, subRate)  # (nQuantiles, nColTypes, nDiscretizedTimes, alphabetSize, alphabetSize)
         subMatrix = einops.rearrange (subMatrix, 'q c t i j -> t q c i j')
-        return -(subRateCount * jnp.log(subMatrix) + rootCount * jnp.log(rootProb))
+        return -jnp.sum(subRateCount * jnp.log(subMatrix) + rootCount * jnp.log(rootProb))
     return compositeSubLoss
 
 def createCompositeIndelLoss (model_factory, **kwargs):
@@ -143,8 +147,24 @@ def createCompositeIndelLoss (model_factory, **kwargs):
         subRate, _rootProb, indelParams, alnTypeWeight, _colTypeWeight, _colQuantiles = model_factory (params)
         nAlignTypes = alnTypeWeight.shape[0]
         alphabetSize = subRate.shape[-1]
-        loss = 0
+        loss = 0.
         for a in range(nAlignTypes):
             loss -= jnp.sum (likelihood.transLogLike (transCount[:,a,:,:], ts, indelParams, alphabetSize=alphabetSize, **kwargs))
         return loss
     return compositeIndelLoss
+
+jit_value_and_grad = lambda f: jax.jit (jax.value_and_grad (f))
+def optimizeByCompositeEM (dataset, model_factory, params, value_and_grad=jit_value_and_grad, useKM03=False, init_lr=None, show_grads=None, **kwargs):
+    sub_loss_value_and_grad = value_and_grad (createCompositeSubLoss (model_factory))
+    trans_loss_value_and_grad = value_and_grad (createCompositeIndelLoss (model_factory, useKM03=useKM03))
+    optax_args = dict((k,v) for k,v in [('init_lr',init_lr),('show_grads',show_grads)] if v is not None)
+    def take_step (params, nStep):
+        a_count, at_count, ts, rootCount, subRateCount, transCount, ll = getPosteriorCounts (dataset, params, model_factory, useKM03=useKM03)
+        sub_loss_vg_bound = lambda params: sub_loss_value_and_grad (params, ts, rootCount, subRateCount)
+        trans_loss_vg_bound = lambda params: trans_loss_value_and_grad (params, ts, transCount)
+        params, _sub_ll = optimize (sub_loss_vg_bound, params, prefix=f"EM step {nStep+1}, substitution params: ", **optax_args, **kwargs)
+        params, _trans_ll = optimize (trans_loss_vg_bound, params, prefix=f"EM step {nStep+1}, indel params: ", **optax_args, **kwargs)
+        params['alntypelogits'] = jnp.log (a_count / jnp.sum(a_count))
+        params['coltypelogits'] = jnp.log (at_count / jnp.sum(at_count,axis=-1,keepdims=True))
+        return params, -ll
+    return optimize_generic (take_step, params, **kwargs)

@@ -11,6 +11,7 @@ import logging
 import likelihood
 import dataset
 from optimize import optimize
+from cherry import optimizeByCompositeEM
 
 #jax.config.update("jax_debug_nans", True)
 
@@ -32,6 +33,7 @@ def main (modelFile: str,
           patience: int = 10,
           show_grads: bool = False,
           use_jit: bool = True,
+          cherry: bool = False,
           ):
     """
     Compute derivatives of log-likelihood for tree, alignment, and model.
@@ -52,6 +54,7 @@ def main (modelFile: str,
         min_inc: Minimum fractional increase in log-likelihood
         show_grads: Show gradients
         use_jit: Use JIT compilation
+        cherry: use CherryML-style composite likelihood for training
     """
 
     # Read model and alphabet
@@ -88,6 +91,10 @@ def main (modelFile: str,
     ggi_model_factory = likelihood.createGGIModelFactory (sub_model_factory, nQuantiles)
     loss = dataset.createLossFunction (data, ggi_model_factory, includeSubs=not omitSubs, includeIndels=not omitIndels, useKM03=km03)
 
+    # Functors
+    optional_jit = jax.jit if use_jit else lambda f: f
+    value_and_grad = lambda f: optional_jit (jax.value_and_grad (f))
+
     # Initialize parameters of the model + optimizer.
     params = { 'indels': indelParams,
                'subs': [{'subrate':s,'rootlogits':r} for (s,r) in mixture],
@@ -95,20 +102,20 @@ def main (modelFile: str,
                'coltypelogits': colTypeLogits,
                'colshape': colShape }
 
-    # Training loop
+    # Training
     if train:
-        loss_value_and_grad = jax.value_and_grad (loss)
-        if use_jit:
-            loss_value_and_grad = jax.jit (loss_value_and_grad)
-
-        best_params = optimize (loss_value_and_grad, params, init_lr=init_lr, max_iter=max_iter, min_inc=min_inc, patience=patience, use_jit=use_jit, show_grads=show_grads)
+        opt_args = {'init_lr':init_lr, 'max_iter':max_iter, 'min_inc':min_inc, 'patience':patience, 'show_grads':show_grads}
+        if cherry:
+            best_params = optimizeByCompositeEM (data, ggi_model_factory, params, value_and_grad=value_and_grad, useKM03=km03, **opt_args)
+        else:
+            loss_value_and_grad = value_and_grad (loss)
+            best_params = optimize (loss_value_and_grad, params, **opt_args)
 
         # Convert back to historian format, and output
         subRate, rootProb, indelParams = ggi_model_factory (best_params)
         print (json.dumps (likelihood.toHistorianParams (alphabet, [(subRate, rootProb)], [indelParams], alnTypeLogits, colTypeLogits, colShape, nQuantiles)))
     else:
-        if use_jit:
-            loss = jax.jit(loss)
+        loss = optional_jit(loss)
         ll = loss(params)
         print("Loss (negative log-likelihood): %f" % ll)
 
