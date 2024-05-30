@@ -85,12 +85,18 @@ def subLogLikeForMatrices (alignment, parentIndex, subMatrix, rootProb, maxChunk
         likelihood += jnp.zeros((*H,R,C,A))
     logNorm = jnp.zeros((*H,C))  # (*H,C)
     # Compute log-likelihood for all columns in parallel by iterating over nodes in postorder
-    for child in range(R-1,0,-1):
-        parent = parentIndex[child]
-        likelihood = likelihood.at[...,parent,:,:].multiply (jnp.einsum('...ij,...cj->...ci', subMatrix[...,child,:,:], likelihood[...,child,:,:]))
+    def computeLogLikeForBranch (vars, branch):
+        likelihood, logNorm = vars
+        child, parent, subMatrix = branch
+        likelihood = likelihood.at[...,parent,:,:].multiply (jnp.einsum('...ij,...cj->...ci', subMatrix, likelihood[...,child,:,:]))
         maxLike = jnp.max(likelihood[...,parent,:,:], axis=-1)  # (*H,C)
         likelihood = likelihood.at[...,parent,:,:].divide (maxLike[...,None])  # guard against underflow
         logNorm = logNorm + jnp.log(maxLike)
+        return (likelihood, logNorm), None
+    postorderBranches = (jnp.arange(R-1,0,-1),  # child indices
+                         jnp.flip(parentIndex[1:]), # parent indices
+                         jnp.flip(jnp.moveaxis(subMatrix,-3,0)[1:,...],axis=0))  # substitution matrices
+    (likelihood, logNorm), _dummy = jax.lax.scan (computeLogLikeForBranch, (likelihood, logNorm), postorderBranches)
     logNorm = logNorm + jnp.log(jnp.einsum('...ci,...i->...c', likelihood[...,0,:,:], rootProb))  # (*H,C)
     return logNorm
 
