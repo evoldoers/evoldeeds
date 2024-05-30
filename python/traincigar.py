@@ -11,7 +11,7 @@ import logging
 import likelihood
 import dataset
 from optimize import optimize
-from cherry import optimizeByCompositeEM
+from cherry import optimizeByPhyloExpectationCompositeMaximization, optimizeByCompositeExpectationMaximization
 
 #jax.config.update("jax_debug_nans", True)
 
@@ -34,6 +34,7 @@ def main (modelFile: str,
           show_grads: bool = False,
           use_jit: bool = True,
           cherry: bool = False,
+          phylocherry: bool = False,
           ):
     """
     Compute derivatives of log-likelihood for tree, alignment, and model.
@@ -55,6 +56,7 @@ def main (modelFile: str,
         show_grads: Show gradients
         use_jit: Use JIT compilation
         cherry: use CherryML-style composite likelihood for training
+        phylocherry: use phylogenetically weighted composite likelihood to train column-level mixtures
     """
 
     # Read model and alphabet
@@ -103,11 +105,13 @@ def main (modelFile: str,
     # Training
     if train:
         opt_args = {'init_lr':init_lr, 'max_iter':max_iter, 'min_inc':min_inc, 'patience':patience, 'show_grads':show_grads}
-        if cherry:
-            best_params, best_ll = optimizeByCompositeEM (data, ggi_model_factory, params, use_jit=use_jit, useKM03=km03, **opt_args)
+        assert not (cherry and phylocherry), "Cannot use both CherryML and phylogenetic CherryML"
+        if phylocherry:
+            best_params, best_ll = optimizeByPhyloExpectationCompositeMaximization (data, ggi_model_factory, params, use_jit=use_jit, useKM03=km03, **opt_args)
+        elif cherry:
+            best_params, best_ll = optimizeByCompositeExpectationMaximization (data, ggi_model_factory, params, use_jit=use_jit, useKM03=km03, **opt_args)
         else:
-            loss_value_and_grad = jit (jax.value_and_grad (loss))
-            best_params, best_ll = optimize (loss_value_and_grad, params, **opt_args)
+            best_params, best_ll = optimize (jit (jax.value_and_grad (loss)), params, **opt_args)
 
         # Convert back to historian format, and output
         subRate, rootProb, indelParams, *_rest = ggi_model_factory (best_params)

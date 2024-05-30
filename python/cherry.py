@@ -1,5 +1,5 @@
 import logging
-
+from copy import deepcopy
 import numpy as np
 from tqdm import tqdm
 
@@ -86,6 +86,67 @@ def discretizeTime (t, logBase=defaultLogBase):
 def undiscretizeTime (t, logBase=defaultLogBase):
     return jnp.power (logBase, t)
 
+def countWeightedCherries (data, alphabetSize, a_pp = None, qtc_pp = None, rootCount=None, count_by_t=None, logBase=defaultLogBase):
+    seqs, parentIndex, distanceToParent, _transCounts = data
+    _nRows, nCols = seqs.shape
+    if a_pp is not None:
+        nAlignTypes = len(a_pp)
+    else:
+        nAlignTypes = 1
+        a_pp = jnp.ones (nAlignTypes)
+    if qtc_pp is not None:
+        nQuantiles, nColTypes, _ = qtc_pp.shape
+    else:
+        nQuantiles = 1
+        nColTypes = 1
+        qtc_pp = jnp.ones ((nQuantiles, nColTypes, nCols))
+    if rootCount is None:
+        rootCount = np.zeros ((nQuantiles, nColTypes, alphabetSize))
+    if count_by_t is None:
+        count_by_t = {}  # count_by_t[discretizedTime] = (subRateCount, transCounts)
+    for (i,j), dij in pickCherries (parentIndex, distanceToParent):
+        t = discretizeTime (dij, logBase=logBase).item()
+        subRateCount, transCount = count_by_t.get(t, (np.zeros((nQuantiles, nColTypes, alphabetSize, alphabetSize)),
+                                                        np.zeros((nAlignTypes, 3, 3))))
+
+        _pairGapSize, pairTransCount = cigartree.countGapSizesInTokenizedPairwiseAlignment (seqs[i,:], seqs[j,:])
+        pairTransCount = (pairTransCount + pairTransCount.transpose()) / 2
+        for a in range(nAlignTypes):
+            transCount[a,:,:] += pairTransCount * a_pp[a]
+
+        for col in range(nCols):
+            ci = seqs[i,col]
+            cj = seqs[j,col]
+            if ci >= 0 or cj >= 0:
+                for quantile in range(nQuantiles):
+                    for colType in range(nColTypes):
+                        count = qtc_pp[quantile,colType,col] / 2
+                        if ci >= 0:
+                            rootCount[quantile,colType,ci] += count
+                        if cj >= 0:
+                            rootCount[quantile,colType,cj] += count
+                        if ci >= 0 and cj >= 0:
+                            subRateCount[quantile,colType,ci,cj] += count
+                            subRateCount[quantile,colType,cj,ci] += count
+        
+        count_by_t[t] = subRateCount, transCount
+
+    return rootCount, count_by_t
+
+def cherryCountsToArrays (count_by_t):
+    dts = sorted(count_by_t.keys())
+    ts = undiscretizeTime (np.array (dts))  # (nDiscretizedTimes,)
+    subRateCount = np.stack ([count_by_t[dt][0] for dt in dts], axis=0)  # (nDiscretizedTimes, nQuantiles, nColTypes, alphabetSize, alphabetSize)
+    transCount = np.stack ([count_by_t[dt][1] for dt in dts], axis=0)  # (nDiscretizedTimes, nAlignTypes, 3, 3)
+    return ts, subRateCount, transCount
+
+def getDatasetCounts (dataset, alphabetSize, logBase=defaultLogBase):
+    logging.warning("Preprocessing alignment dataset")
+    for data in tqdm(dataset):
+        rootCount, count_by_t = countWeightedCherries (data, alphabetSize, logBase=logBase)
+        ts, subRateCount, transCount = cherryCountsToArrays (count_by_t)
+        yield rootCount, count_by_t, ts, subRateCount, transCount
+
 def getPosteriorCounts (dataset, params, model_factory, getPosteriorWeights=getPosteriorWeights, logBase=defaultLogBase, **kwargs):
     model = model_factory (params)
     subRate, _rootProb, _indelParams, _alnTypeWeight, colTypeWeight, colQuantiles = model
@@ -97,60 +158,23 @@ def getPosteriorCounts (dataset, params, model_factory, getPosteriorWeights=getP
     rootCount = np.zeros ((nQuantiles, nColTypes, alphabetSize))
     count_by_t = {}  # count_by_t[discretizedTime] = (subRateCount, transCounts)
     ll = 0.
-    nTransitions = 0
-    nPairs = 0
-    nChars = 0
-    nAlignedChars = 0
     for data in tqdm(dataset):
-        seqs, parentIndex, distanceToParent, transCounts = data
-        _nRows, nCols = seqs.shape
         a_pp, at_c, qtc_pp, a_ll = getPosteriorWeights (data, model, **kwargs)
         a_count += a_pp
         at_count += at_c
         ll += a_ll
-        for (i,j), dij in pickCherries (parentIndex, distanceToParent):
-            nPairs += 1
-            t = discretizeTime (dij, logBase=logBase).item()
-            subRateCount, transCount = count_by_t.get(t, (np.zeros((nQuantiles, nColTypes, alphabetSize, alphabetSize)),
-                                                          np.zeros((nAlignTypes, 3, 3))))
-
-            _pairGapSize, pairTransCount = cigartree.countGapSizesInTokenizedPairwiseAlignment (seqs[i,:], seqs[j,:])
-            nTransitions += jnp.sum(pairTransCount)
-            pairTransCount = (pairTransCount + pairTransCount.transpose()) / 2
-            for a in range(nAlignTypes):
-                transCount[a,:,:] += pairTransCount * a_pp[a]
-
-            for col in range(nCols):
-                ci = seqs[i,col]
-                cj = seqs[j,col]
-                if ci >= 0:
-                    nChars += 1
-                if cj >= 0:
-                    nChars += 1
-                if ci >= 0 and cj >= 0:
-                    nAlignedChars += 1
-                if ci >= 0 or cj >= 0:
-                    for quantile in range(nQuantiles):
-                        for colType in range(nColTypes):
-                            count = qtc_pp[quantile,colType,col] / 2
-                            if ci >= 0:
-                                rootCount[quantile,colType,ci] += count
-                            if cj >= 0:
-                                rootCount[quantile,colType,cj] += count
-                            if ci >= 0 and cj >= 0:
-                                subRateCount[quantile,colType,ci,cj] += count
-                                subRateCount[quantile,colType,cj,ci] += count
-            
-            count_by_t[t] = subRateCount, transCount
-
-    dts = sorted(count_by_t.keys())
-    ts = undiscretizeTime (np.array (dts))  # (nDiscretizedTimes,)
-    subRateCount = np.stack ([count_by_t[dt][0] for dt in dts], axis=0)  # (nDiscretizedTimes, nQuantiles, nColTypes, alphabetSize, alphabetSize)
-    transCount = np.stack ([count_by_t[dt][1] for dt in dts], axis=0)  # (nDiscretizedTimes, nAlignTypes, 3, 3)
-
-#    logging.warning ("nPairs=%d, nChars=%d, sum(rootCount)=%f, nAlignedChars=%d, sum(subRateCount)=%f, nTransitions=%d, sum(transCount)=%f" % (nPairs, nChars, jnp.sum(rootCount), nAlignedChars, jnp.sum(subRateCount), nTransitions, jnp.sum(transCount)))
-
+        rootCount, count_by_t = countWeightedCherries (data, alphabetSize, a_pp=a_pp, qtc_pp=qtc_pp, rootCount=rootCount, count_by_t=count_by_t, logBase=logBase)
+    ts, subRateCount, transCount = cherryCountsToArrays (count_by_t)
     return a_count, at_count, ts, rootCount, subRateCount, transCount, ll
+
+def selectAlignAndColType (params, nType):
+    params = deepcopy(params)
+    params['alntypelogits'] = jnp.zeros(1)
+    params['coltypelogits'] = jnp.zeros((1,1))
+    params['subs'] = [params['subs'][nType]]
+    params['indels'] = [params['indels'][nType]]
+    params['colshape'] = [params['colshape'][nType]]
+    return params
 
 def createCompositeSubLoss (model_factory):
     def compositeSubLoss (params, ts, rootCount, subRateCount):
@@ -173,7 +197,12 @@ def createCompositeIndelLoss (model_factory, useKM03=False, **kwargs):
         return loss
     return compositeIndelLoss
 
-def optimizeByCompositeEM (dataset, model_factory, params, use_jit=True, useKM03=False, init_lr=None, show_grads=None, verbosity=1, **kwargs):
+def createCompositeAlignmentLogLike (sub_loss, indel_loss):
+    def compositeAlignmentLogLike (params, ts, rootCount, subRateCount, transCount):
+        return -(sub_loss (params, ts, rootCount, subRateCount) + indel_loss (params, ts, transCount))
+    return compositeAlignmentLogLike
+
+def optimizeByPhyloExpectationCompositeMaximization (dataset, model_factory, params, use_jit=True, useKM03=False, init_lr=None, show_grads=None, verbosity=1, **kwargs):
     if use_jit:
         value_and_grad = lambda f: jax.jit (jax.value_and_grad (f))
         getPosteriorWeights_jit = jax.jit (getPosteriorWeights, static_argnames=('alphabetSize', 'useKM03'))
@@ -195,5 +224,49 @@ def optimizeByCompositeEM (dataset, model_factory, params, use_jit=True, useKM03
         params, _trans_ll = optimize (trans_loss_vg_bound, params, prefix=f"EM step {nStep+1}, indel params iteration ", verbose=verbosity>1, **optax_args, **kwargs)
         params['alntypelogits'] = jnp.log (a_count / jnp.sum(a_count))
         params['coltypelogits'] = jnp.log (at_count / jnp.sum(at_count,axis=-1,keepdims=True))
+        return params, -ll
+    return optimize_generic (take_step, params, prefix="EM step ", verbose=verbosity>0, **kwargs)
+
+def optimizeByCompositeExpectationMaximization (dataset, model_factory, params, use_jit=True, useKM03=False, init_lr=None, show_grads=None, verbosity=1, **kwargs):
+    jit = jax.jit if use_jit else lambda f: f
+    sub_loss = createCompositeSubLoss (model_factory)
+    trans_loss = createCompositeIndelLoss (model_factory, useKM03=useKM03)
+    sub_loss_value_and_grad = jit (jax.value_and_grad (sub_loss))
+    trans_loss_value_and_grad = jit (jax.value_and_grad (trans_loss))
+    align_loglike = jit (createCompositeAlignmentLogLike (sub_loss, trans_loss))
+    optax_args = dict((k,v) for k,v in [('init_lr',init_lr),('show_grads',show_grads)] if v is not None)
+    alphabetSize = params['subs'][0]['subrate'].shape[-1]
+    nQuantiles = len(params['colshape'])
+    nAlignTypes = params['alntypelogits'].shape[0]
+    assert nQuantiles==1, 'Composite EM currently only supports one quantile (FIXME)'  # could fix by prescaling columns by estimated rate, as in CherryML paper
+    assert params['coltypelogits'] == jnp.log(jnp.eye(nAlignTypes)), 'Composite EM requires a one-to-one mapping between alignments & columns'
+    nColTypes = nAlignTypes
+    datasetCounts = list(getDatasetCounts (dataset, alphabetSize))
+    def take_step (params, nStep):
+        rootCount = np.zeros ((nQuantiles, nColTypes, alphabetSize))
+        count_by_t = {}  # count_by_t[discretizedTime] = (subRateCount, transCounts)
+        logging.warning("E-step %d: computing posterior alignment weights" % (nStep+1))
+        ll = 0.
+        a_count = np.zeros (nAlignTypes)
+        a_logprior = params['alntypelogits'] - logsumexp(params['alntypelogits'])
+        for rc, cbt, ts, subRateCount, transCount in tqdm(datasetCounts):
+            a_ll = jnp.array ([align_loglike (selectAlignAndColType(params,n), ts, rc, subRateCount, transCount) for n in range(nAlignTypes)])
+            a_pp = jax.nn.softmax(a_ll)
+            a_count += a_pp
+            ll += logsumexp (a_ll + a_logprior)
+            for dt in cbt:
+                subRateCount_dt_for_aln, transCount_dt_for_aln = cbt[dt]
+                subRateCount_dt, transCount_dt = count_by_t.get (dt, (np.zeros((nQuantiles, nColTypes, alphabetSize, alphabetSize)),
+                                                                      np.zeros((nAlignTypes, 3, 3))))
+                subRateCount_dt += subRateCount_dt_for_aln * a_pp[None,:,None,None]
+                transCount_dt += transCount_dt_for_aln * a_pp[:,None,None]
+                count_by_t[dt] = subRateCount_dt, transCount_dt
+        ts, subRateCount, transCount = cherryCountsToArrays (count_by_t)
+        logging.warning ("M-step %d: optimizing composite likelihoods (total loss %f)" % (nStep+1, -ll))
+        sub_loss_vg_bound = lambda params: sub_loss_value_and_grad (params, ts, rootCount, subRateCount)
+        trans_loss_vg_bound = lambda params: trans_loss_value_and_grad (params, ts, transCount)
+        params, _sub_ll = optimize (sub_loss_vg_bound, params, prefix=f"EM step {nStep+1}, substitution params iteration ", verbose=verbosity>1, **optax_args, **kwargs)
+        params, _trans_ll = optimize (trans_loss_vg_bound, params, prefix=f"EM step {nStep+1}, indel params iteration ", verbose=verbosity>1, **optax_args, **kwargs)
+        params['alntypelogits'] = jnp.log (a_count / jnp.sum(a_count))
         return params, -ll
     return optimize_generic (take_step, params, prefix="EM step ", verbose=verbosity>0, **kwargs)
