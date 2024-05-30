@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+from tqdm import tqdm
 
 import jax
 import jax.numpy as jnp
@@ -100,7 +101,7 @@ def getPosteriorCounts (dataset, params, model_factory, getPosteriorWeights=getP
     nPairs = 0
     nChars = 0
     nAlignedChars = 0
-    for data in dataset:
+    for data in tqdm(dataset):
         seqs, parentIndex, distanceToParent, transCounts = data
         _nRows, nCols = seqs.shape
         a_pp, at_c, qtc_pp, a_ll = getPosteriorWeights (data, model, **kwargs)
@@ -183,7 +184,9 @@ def optimizeByCompositeEM (dataset, model_factory, params, use_jit=True, useKM03
     trans_loss_value_and_grad = value_and_grad (createCompositeIndelLoss (model_factory, useKM03=useKM03))
     optax_args = dict((k,v) for k,v in [('init_lr',init_lr),('show_grads',show_grads)] if v is not None)
     def take_step (params, nStep):
+        logging.warning("Computing posterior counts (E-step %d)" % (nStep+1))
         a_count, at_count, ts, rootCount, subRateCount, transCount, ll = getPosteriorCounts(dataset, params, model_factory, getPosteriorWeights=getPosteriorWeights_jit, useKM03=useKM03)
+        logging.warning ("Optimizing composite likelihoods (M-step %d), loss=%f" % (nStep+1, -ll))
         sub_loss_vg_bound = lambda params: sub_loss_value_and_grad (params, ts, rootCount, subRateCount)
         trans_loss_vg_bound = lambda params: trans_loss_value_and_grad (params, ts, transCount)
         params, _sub_ll = optimize (sub_loss_vg_bound, params, prefix=f"EM step {nStep+1}, substitution params iteration ", verbose=verbosity>1, **optax_args, **kwargs)
