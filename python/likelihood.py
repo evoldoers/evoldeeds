@@ -208,10 +208,15 @@ def parseHistorianParams (params):
         colShape = jnp.array([params.get('shape',1)], dtype=jnp.float32)
     def parseIndelParams (cpt):
         return tuple(cpt.get(name,0) for name in ['insrate','delrate','insextprob','delextprob'])
+    nColTypes = len(mixture)
     alignTypes = params.get ('aligntype', [params])
+    nAlignTypes = len(alignTypes)
     indelParams = [parseIndelParams(t) for t in alignTypes]
     alnTypeLogits = jnp.log(jnp.array([t.get('weight',1) for t in alignTypes], dtype=jnp.float32))   # alnTypeLogits[i] \propto log P(alignType=i)
-    colTypeLogits = jnp.log(jnp.stack([jnp.array(t.get('coltypeweight',jnp.ones(len(mixture), dtype=jnp.float32))) for t in alignTypes], axis=0))  # colTypeLogits[i,j] \propto log P(columnType=j | alignType=i)
+    # If no alignType->colType mixture is specified, and nAlignTypes==nColTypes, assume a one-to-one mapping
+    # Otherwise (if no mixture is specified and nAlignTypes!=nColTypes), assume a uniform mixture
+    colTypeLogits = jnp.log(jnp.stack([jnp.array(t.get('coltypeweight',
+                                                       jax.nn.one_hot(nAlignType,nColTypes,dtype=jnp.float32) if nAlignTypes==nColTypes else jnp.ones(len(mixture),dtype=jnp.float32))) for nAlignType,t in enumerate(alignTypes)], axis=0))  # colTypeLogits[i,j] \propto log P(columnType=j | alignType=i)
     quantiles = params.get('quantiles',1)  # number of quantiles (rate classes) for column gamma distributions
     return alphabet, mixture, indelParams, alnTypeLogits, colTypeLogits, colShape, quantiles
 
