@@ -1,4 +1,6 @@
 const transitionMatrix = (t, indelParams) => {
+    if (t === 0)
+        return [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
     const [lam, mu, x, y] = indelParams;
     const r = (lam + mu) / 2;
     const a = (x + y) / 2;

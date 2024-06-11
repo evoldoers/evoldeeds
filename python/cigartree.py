@@ -77,21 +77,25 @@ def addPathsToMRCAs (seqs, parentIndex, gapChar = '-', wildChar = 'x'):
     seqs = [''.join(s) for s in seqs]
     return seqs
 
+def getCigarChar (parentChar, childChar, gapChar = '-'):
+    if parentChar == gapChar:
+        if childChar == gapChar:
+            return None
+        return 'I'
+    else:
+        if childChar == gapChar:
+            return 'D'
+        return 'M'
+
+def getExpandedCigarString (parentRow, childRow, gapChar = '-'):
+    nCols = len(parentRow)
+    assert len(childRow) == nCols, "Rows must be the same length"
+    return ''.join ([c for c in [getCigarChar(parentRow[n],childRow[n],gapChar) for n in range(nCols)] if c is not None])
+
 def getExpandedCigarsFromAlignment (seqs, parentIndex, gapChar = '-'):
     assert len(seqs) > 0, "Alignment is empty"
     nRows = len(seqs)
     nCols = len(seqs[0])
-    def getCigarChar (parentChar, childChar):
-        if parentChar == gapChar:
-            if childChar == gapChar:
-                return None
-            return 'I'
-        else:
-            if childChar == gapChar:
-                return 'D'
-            return 'M'
-    def getExpandedCigarString (parentRow, childRow):
-        return ''.join ([c for c in [getCigarChar(parentRow[n],childRow[n]) for n in range(nCols)] if c is not None])
     return [getExpandedCigarString(seqs[parentIndex[r]] if r > 0 else gapChar*nCols,seqs[r]) for r in range(nRows)]
 
 def countGapSizes (expandedCigars):
@@ -122,6 +126,11 @@ def countGapSizes (expandedCigars):
         return gapSizeCounts, transCounts
     counts = [countCigar(x) for x in expandedCigars]
     return tuple([c[i] for c in counts] for i in range(2))  # gapSizeCounts, transCounts
+
+def countGapSizesInTokenizedPairwiseAlignment (parentRow, childRow):
+    expandedCigar = getExpandedCigarString (parentRow, childRow, gapChar=-1)
+    gapSizeCounts, transCounts = countGapSizes ([expandedCigar])
+    return gapSizeCounts[0], transCounts[0]
 
 def compressCigarString (stateStr):
     s = None
