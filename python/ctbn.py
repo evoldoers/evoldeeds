@@ -9,6 +9,10 @@ import diffrax
 # J = symmetric coupling matrix (N*N). For i!=j, J_ij=J_ji=interaction strength between components i and j. J_ii = 0
 # h = bias vector (N). h_i=bias of state i
 
+# Endpoint-conditioned variational approximation:
+# mu = (K,N) matrix of mean-field probabilities
+# rho = (K,N) matrix where entry (i,x_i) is the probability of reaching the final state given that component #i is in state x_i
+
 # Rate for substitution x_i->y_i
 # i = 1..K
 # x = (K,) vector of integers from 0..N-1
@@ -25,7 +29,6 @@ def offdiag_mask (N):
 smallest_float32 = jnp.finfo('float32').smallest_normal
 
 # Mean-field averaged rates for a continuous-time Bayesian network
-# mu = (K,N) matrix of mean-field probabilities
 # Returns (K,N,N) matrix where entry (i,x_i,y_i) is mean-field averaged rate matrix for component #i
 # NB only valid for x_i != y_i
 def q_bar (i, C, S, J, h, mu):
