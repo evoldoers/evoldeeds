@@ -30,11 +30,12 @@ smallest_float32 = jnp.finfo('float32').smallest_normal
 
 # Mean-field averaged rates for a continuous-time Bayesian network
 # Returns (K,N,N) matrix where entry (i,x_i,y_i) is mean-field averaged rate matrix for component #i
-# NB only valid for x_i != y_i
-def q_bar (i, C, S, J, h, mu):
+def q_bar (C, S, J, h, mu):
+    K = mu.shape[0]
     exp_minus_2J = jnp.exp (-2 * J)  # (y_i,x_k)
     exp_minus_2JC = exp_minus_2J[None,None,:,:] ** C[:,:,None,None]  # (i,k,y_i,x_k)
     mu_exp_JC = jnp.einsum ('kx,ikyx->iky', mu, exp_minus_2JC)  # (i,k,y_i)
+    S = S * offdiag_mask(K)
     return S[None,:,:] * jnp.exp(-h)[None,None,:] * product(mu_exp_JC,axis=-2,keepdims=True)  # (i,x_i,y_i)
 
 # Returns (K,K,N,N,N) tensor where entry (i,j,x_j,x_i,y_i) is the mean-field averaged rate x_i->y_i, conditioned on component #j being in state x_j
@@ -47,6 +48,7 @@ def q_bar_cond (C, S, J, h, mu):
     exp_minus_2J = jnp.exp (-2 * J)  # (N,N)
     exp_minus_2JC = exp_minus_2J[None,None,None,:,:] ** Ci_mask[:,:,None,None,None]  # (i,j,k,y_i,x_k)
     mu_exp_JC = jnp.einsum ('kx,ijkyx->ijky', mu, exp_minus_2JC)  # (i,j,k,y_i)
+    S = S * offdiag_mask(K)
     return S[None,None,None,:,:] * jnp.exp(-h)[None,None,None,None,:] * jnp.exp(-2*cond_energy)[:,:,:,None,:] * product(mu_exp_JC,axis=-2)[:,:,:,None,:]  # (i,j,x_j,x_i,y_i)
 
 # Geometrically-averaged mean-field rates for a continuous-time Bayesian network
@@ -54,6 +56,7 @@ def q_bar_cond (C, S, J, h, mu):
 # NB only valid for x_i != y_i
 def q_tilde (C, S, J, h, mu):
     mean_energy = jnp.einsum ('kx,ik,yx->iy', mu, C, J)  # (i,y_i)
+    S = S * offdiag_mask(K)
     return S[None,:,:] * jnp.exp(-h-2*mean_energy)[None,None,:]  # (i,x_i,y_i)
 
 # Returns (K,K,N,N,N) matrix where entry (i,j,x_j,x_i,y_i) is the geometrically-averaged rate x_i->y_i, conditioned on component #j being in state x_j
@@ -64,12 +67,13 @@ def q_tilde_cond (C, S, J, h, mu):
     cond_energy = C[:,:,None,None] * J[None,None,:,:]  # (i,j,x_j,y_i)
     Ci_mask = jnp.einsum ('jk,ik->ijk', cond_mask, C)  # (i,j,k)
     mean_energy = jnp.einsum ('kx,ijk,yx->ijy', mu, Ci_mask, J)  # (i,j,y_i)
+    S = S * offdiag_mask(K)
     return S[None,None,None,:,:] * jnp.exp(-h)[None,None,None,None,:] * jnp.exp(-2*cond_energy)[:,:,:,None,:] * jnp.exp(-2*mean_energy)[:,:,None,None,:]  # (i,j,x_j,x_i,y_i)
 
 # gamma
 # Returns (K,N,N) matrix where entry (i,x_i,y_i) is the joint probability of transition x_i->y_i for component #i
 def gamma (mu, rho, C, S, J, h):
-    return jnp.einsum ('ix,ixy,iy,iy->ixy', mu, q_bar(C,S,J,h,mu), rho, 1/mu)
+    return jnp.einsum ('ix,ixy,iy,iy->ixy', mu, q_tilde(C,S,J,h,mu), rho, 1/mu)
 
 # Returns (K,N) matrix
 def psi (mu, rho, C, S, J, h):
@@ -79,6 +83,20 @@ def psi (mu, rho, C, S, J, h):
     log_q_tilde_cond = -jnp.log (jnp.where (_q_tilde_cond < 0, 1, _q_tilde_cond))  # (K,K,N,N,N)
     return jnp.einsum('jy,jixyz->ix',mu,_q_bar_cond) + jnp.einsum('jxy,jixyz->ix',_gamma,log_q_tilde_cond)
 
+def rho_deriv (i, mu, rho, C, S, J, h):
+    K = mu.shape[0]
+    _q_bar = q_bar(C,S,J,h,mu)  # (K,N,N)
+    q_bar_diag = jnp.einsum ('kxy->kx', _q_bar)  # (K,N)
+    _psi = psi(mu,rho,C,S,J,h)  # (K,N)
+    _q_tilde = q_tilde(C,S,J,h,mu)  # (K,N,N)
+    rho_deriv_i = -rho[i,:] * (q_bar_diag[i,:] + _psi[i,:]) - jnp.einsum ('y,xy->x', rho[i,:], _q_tilde[i,:,:])  # (N,)
+    return jnp.outer (jax.nn.one_hot(i,K), rho_deriv_i)  # (K,N)
+
+def mu_deriv (i, mu, rho, C, S, J, h):
+    K = mu.shape[0]
+    _gamma = gamma(mu,rho,C,S,J,h)  # (K,N,N)
+    mu_deriv_i = jnp.einsum('yx->x',_gamma[i,:]) - jnp.einsum('xy->y',_gamma[i,:])  # (N,)
+    return jnp.outer (jax.nn.one_hot(i,K), mu_deriv_i)  # (K,N)
 
 # Calculate the variational bound for a continuous-time Bayesian network
 def ctbnVariationalBound ():
