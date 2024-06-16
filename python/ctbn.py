@@ -204,7 +204,7 @@ def solve_mu (T, i, mu_i_0, mu_solns, rho_solns, C, S, J, h, rtol=1e-3, atol=1e-
 
 
 # Calculate the variational likelihood for a component in a continuous-time Bayesian network, conditioned on its Markov blanket
-def ctbnComponentLikelihood (xs, ys, T, C, S, J, h, mininc=1e-3):
+def ctbn_component_probability (xs, ys, T, C, S, J, h, min_inc=1e-3, max_updates=3):
     K = C.shape[0]
     N = S.shape[0]
     # initialize component-indexed arrays of mu, rho solutions, using single-component posteriors
@@ -222,15 +222,15 @@ def ctbnComponentLikelihood (xs, ys, T, C, S, J, h, mininc=1e-3):
     #   solve rho and then mu for component i, using diffrax, and replace single-component posteriors with diffrax Solution's
     #   F_prev <- F_current, F_current <- new variational bound
     def while_cond_fun (args):
-        F_prev, F_current, rho_solns, mu_solns, best_result = args
-        return F_current > F_prev and (F_current - F_prev) / F_prev > mininc
+        F_prev, F_current, rho_solns, mu_solns, best_result, n_updates = args
+        return n_updates < max_updates and F_current > F_prev and (F_current - F_prev) / F_prev > min_inc
     def while_body_fun (args):
-        F_prev, F_current, rho_solns, mu_solns, best_result = args
+        F_prev, F_current, rho_solns, mu_solns, best_result, n_updates = args
         F_prev = F_current
         F_current = solve_F (T, mu_solns, rho_solns, C, S, J, h)
         rho_solns, mu_solns = jax.lax.fori_loop (0, N, loop_body_fun, (rho_solns, mu_solns))
         best_result = jax.lax.cond (F_current > F_prev, get_result(mu_solns), best_result)
-        return F_prev, F_current, rho_solns, mu_solns, best_result
+        return F_prev, F_current, rho_solns, mu_solns, best_result, n_updates + 1
     def loop_body_fun (i, args):
         rho_solns, mu_solns = args
         i = N - 1 - i  # finish with component #0
@@ -241,6 +241,17 @@ def ctbnComponentLikelihood (xs, ys, T, C, S, J, h, mininc=1e-3):
         return rho_solns, mu_solns
     def get_result (mu_solns):
         return mu_solns[0].evaluate(T)[ys[0]]
-    F_prev, F_current, rho_solns, mu_solns, best_result = jax.lax.while_loop (while_cond_fun, while_body_fun, (F_prev, F_current, rho_solns, mu_solns, get_result(mu_solns)))
+    F_prev, F_current, rho_solns, mu_solns, best_result = jax.lax.while_loop (while_cond_fun, while_body_fun, (F_prev, F_current, rho_solns, mu_solns, get_result(mu_solns), 0))
     # return mu^0_{y_0}}(T), i.e. the variational probability that component #0 is in state y_0 at time T
     return best_result
+
+# Given a contact matrix C for a sequence, return a site-indexed list of tuples:
+# - the Markov blanket for site i, plus site i itself (i.e. a list of sites j!=i such that C[i,j] != 0)
+# - the contact matrix for that list of sites (i.e. i plus its Markov blanket)
+def get_Markov_blankets (C):
+    pass
+
+# Given two aligned (ungapped) sequences, and the list of Markov blankets and contact matrices,
+# plus a site mask (which can be used to mask out sites that are added for padding reasons),
+# along with the parameters of a Potts continuous-time Bayes network substitution model,
+# return the log of the pseudolikelihood for descendant (sequence #2) given ancestor (sequence #1)
