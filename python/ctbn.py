@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax.scipy.linalg import expm
 import diffrax
 
-# Implements the algorithm from:
+# Implements the algorithm from Cohn et al (2010), for protein Potts models parameterized by contact & coupling matrices
 # Cohn et al (2010), JMLR 11:93. Mean Field Variational Approximation for Continuous-Time Bayesian Networks
 
 # Model:
