@@ -249,9 +249,22 @@ def ctbn_component_probability (xs, ys, T, C, S, J, h, min_inc=1e-3, max_updates
 # - the Markov blanket for site i, plus site i itself (i.e. a list of sites j!=i such that C[i,j] != 0)
 # - the contact matrix for that list of sites (i.e. i plus its Markov blanket)
 def get_Markov_blankets (C):
-    pass
+    pass  # return blankets, Cs
 
 # Given two aligned (ungapped) sequences, and the list of Markov blankets and contact matrices,
 # plus a site mask (which can be used to mask out sites that are added for padding reasons),
 # along with the parameters of a Potts continuous-time Bayes network substitution model,
 # return the log of the pseudolikelihood for descendant (sequence #2) given ancestor (sequence #1)
+def ctbn_log_pseudolikelihood (xseq, yseq, mask, blankets, Cs, S, J, h):
+    pass  # return log_pl
+
+# Weak L2 regularizer for J and h
+def param_regularizer (J, h, alpha=1e-4):
+    return alpha * (jnp.sum (J**2) + jnp.sum (h**2))
+
+# Tests:
+# - For a single component, rho and mu should be equal to the single-component posterior
+# - For a single component, the F term should be equal to the log-likelihood
+# - For a single component, the log-pseudolikelihood should be equal to the log-likelihood
+# - For two components that are not in contact, F (and hence the log-pseudolikelihood) should be equal to the log-likelihood
+# - For two components that are in contact, F should be a reasonably close lower bound for the log-likelihood
