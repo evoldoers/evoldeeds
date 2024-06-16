@@ -262,7 +262,7 @@ def ctbn_log_pseudolikelihood (xseq, yseq, mask, blankets, Cs, S, J, h):
 def param_regularizer (J, h, alpha=1e-4):
     return alpha * (jnp.sum (J**2) + jnp.sum (h**2))
 
-# Tests:
+# Tests (should go in a separate file)
 # - For a single component, rho and mu should be equal to the single-component posterior
 # - For a single component, the F term should be equal to the log-likelihood
 # - For a single component, the log-pseudolikelihood should be equal to the log-likelihood
