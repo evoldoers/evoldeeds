@@ -169,7 +169,7 @@ def F_deriv (mu, rho, C, params):
     return dF
 
 # Exact posterior for a complete rate matrix
-class ExactPosteriorRho:
+class ExactRho:
     def __init__ (self, q, T, x, y):
         N = q.shape[0]
         assert q.shape == (N,N)
@@ -184,7 +184,7 @@ class ExactPosteriorRho:
         rho = expm(self.q*(self.T-t)) [:, self.y]  # (N,)
         return rho
 
-class ExactPosteriorMu (ExactPosteriorRho):
+class ExactMu (ExactRho):
     def evaluate (self, t):
         rho = super().evaluate (t)
         exp_qt = expm(self.q*t) [self.x, :]  # (N,)
@@ -259,8 +259,8 @@ def ctbn_variational_fit (xs, ys, T, C, params, min_inc=1e-3, max_updates=3):
     params = normalise_ctbn_params (params)
     # initialize component-indexed arrays of mu, rho solutions, using single-component posteriors
     q = q_single (params)
-    rho_solns = [ExactPosteriorRho (q, T, xs[i], ys[i]) for i in range(K)]
-    mu_solns = [ExactPosteriorMu (q, T, xs[i], ys[i]) for i in range(K)]
+    rho_solns = [ExactRho (q, T, xs[i], ys[i]) for i in range(K)]
+    mu_solns = [ExactMu (q, T, xs[i], ys[i]) for i in range(K)]
     # initialize F_current as variational bound for initial mu and rho, and F_prev as -Infinity
     F_prev = -jnp.inf
     F_current = solve_F (T, mu_solns, rho_solns, C, params)
