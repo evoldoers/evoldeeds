@@ -48,7 +48,7 @@ def q_k (i, x, y_i, C, params):
     S = params['S']
     J = params['J']
     h = params['h']
-    return S[x[i],y_i] * jnp.exp (-h[y_i] - jnp.dot (C[i,:], J[y_i,x]))
+    return S[x[i],y_i] * jnp.exp (-h[y_i] - 2*jnp.dot (C[i,:], J[y_i,x]))
 
 # Mean-field averaged rates for a continuous-time Bayesian network
 # Returns (K,N,N) matrix where entry (i,x_i,y_i) is mean-field averaged rate matrix for component #i

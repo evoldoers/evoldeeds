@@ -6,7 +6,7 @@ import ctbn
 def ising2 (q_same = 10, q_diff = 1):
     J_same = -jnp.log(q_same) / 2
     J_diff = -jnp.log(q_diff) / 2
-    C = jnp.eye(2)
+    C = jnp.ones((2,2)) - jnp.eye(2)
     S = jnp.array ([[0, 1], [1, 0]])
     J = jnp.array ([[J_same, J_diff], [J_diff, J_same]])
     h = jnp.zeros(2)
@@ -16,7 +16,7 @@ def ising2 (q_same = 10, q_diff = 1):
 # For single-component and independent K-component examples, use the telegraph process
 def telegraph (K = 1, lambda1 = 1, lambda2 = 2):
     C = jnp.zeros((K, K))
-    S = jnp.eye(2)
+    S = jnp.array ([[0, 1], [1, 0]])
     J = jnp.zeros((2,2))
     h = -jnp.log(jnp.array([lambda2, lambda1]))  # lambda2 is the rate from state #2 -> #1, h[0] is the bias of state #1
     params = { 'S': S, 'J': J, 'h': h }
