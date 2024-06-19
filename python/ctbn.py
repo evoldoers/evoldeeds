@@ -18,7 +18,6 @@ def symmetrise (matrix):
     return (matrix + matrix.swapaxes(-1,-2)) / 2
 
 def row_normalise (matrix):
-    matrix = jnp.abs (matrix)
     return matrix - jnp.diag(jnp.sum(matrix, axis=-1))
 
 def round_up_to_power (x, base=2):
@@ -44,7 +43,7 @@ def round_up_to_power (x, base=2):
 # nbr_mask = sparse neighbor flag matrix (M*L). nbr_mask[i,n] is 1 if nbr_idx[i,n] is a real neighbor, 0 otherwise
 
 def normalise_ctbn_params (params):
-    return { 'S' : symmetrise(row_normalise(params['S'])),
+    return { 'S' : symmetrise(row_normalise(jnp.abs(params['S']))),
              'J' : symmetrise(params['J']),
              'h' : params['h'] }
 
@@ -261,7 +260,7 @@ def solve_mu (i, mu_i_0, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_soln
 
 # Calculate the variational likelihood for an endpoint-conditioned continuous-time Bayesian network
 # This is a strict lower bound for log P(X_T=ys|X_0=xs,T,params)
-def ctbn_variational_fit (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-3, max_updates=3):
+def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-3, max_updates=3):
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
@@ -282,7 +281,7 @@ def ctbn_variational_fit (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_in
     #   F_prev <- F_current, F_current <- new variational bound
     def while_cond_fun (args):
         F_prev, (F_current, rho_solns, mu_solns), (F_best, rho_best, mu_best), n_updates = args
-        return n_updates < max_updates and F_current > F_prev and (F_current - F_prev) / F_prev > min_inc
+        return n_updates < max_updates and F_current > F_prev and jnp.abs((F_current - F_prev) / F_prev) > min_inc
     def while_body_fun (args):
         F_prev, (F_current, rho_solns, mu_solns), (F_best, rho_best, mu_best), n_updates = args
         F_prev = F_best
@@ -301,7 +300,7 @@ def ctbn_variational_fit (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_in
         mu_solns = [new_mu_i if k==i else old_mu_i for k, old_mu_i in enumerate(mu_solns)]
         return rho_solns, mu_solns
     init_state = F_current, rho_solns, mu_solns
-    F_prev, _final_state, best_state = jax.lax.while_loop (while_cond_fun, while_body_fun, (F_prev, init_state, init_state, 0))
+    _F_prev, _final_state, best_state, _final_n_updates = jax.lax.while_loop (while_cond_fun, while_body_fun, (F_prev, init_state, init_state, 0))
     return best_state
 
 # Given sequences xs,ys and contact matrix C, return padded xs,ys along with seq_mask,nbr_idx,nbr_mask
@@ -324,7 +323,44 @@ def get_Markov_blankets (xs, ys, C, K=None, M=None):
     return xs, ys, seq_mask, nbr_idx, nbr_mask
 
 # Weak L2 regularizer for J and h
-def param_regularizer (params, alpha=1e-4):
+def ctbn_param_regularizer (params, alpha=1e-4):
     return alpha * (jnp.sum (params['J']**2) + jnp.sum (params['h']**2))
 
-# TODO: implement pseudolikelihood (and variational likelihood?) for equilibrium partition function
+# Log-pseudolikelihood for a continuous-time Bayesian network
+def ctbn_pseudo_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params, min_inc=1e-3, max_updates=3):
+    K = nbr_idx.shape[0]
+    N = params['S'].shape[0]
+    params = normalise_ctbn_params (params)
+    E_iy = params['h'][None,None,:] + jnp.einsum('ijy,ij->iy',params['J'][nbr_idx,:],nbr_mask)  # (K,N)
+    log_Zi = jnp.log(jnp.einsum('iy->i',jnp.exp(E_iy)))  # (K,)
+    L_i = E_iy[jnp.arange(K),xs] - log_Zi  # (K,N)
+    return jnp.sum (L_i * seq_mask)
+
+# Mean-field approximation to log partition function of continuous-time Bayesian network
+def ctbn_mean_field_log_Z (seq_mask, nbr_idx, nbr_mask, params, theta):
+    E = jnp.einsum('ix,x->',theta,params['h'][None,:]) + jnp.einsum('ix,ijy,xy,ij->',theta,theta[nbr_idx,:],params['J'],nbr_mask)
+    H = -jnp.einsum('ix->',theta * jnp.log(theta))
+    return E + H
+
+# Variational lower bound for log partition function of continuous-time Bayesian network
+def ctbn_variational_log_Z (seq_mask, nbr_idx, nbr_mask, params, min_inc=1e-3, max_updates=3):
+    K = nbr_idx.shape[0]
+    N = params['S'].shape[0]
+    params = normalise_ctbn_params (params)
+    theta = jnp.repeat (jax.nn.softmax (params['h'])[None,:], K)  # (K,N)
+    current_log_Z = ctbn_mean_field_log_Z (seq_mask, nbr_idx, nbr_mask, params, theta)
+    prev_log_Z = -jnp.inf
+    def while_cond_fun (args):
+        prev_log_Z, (current_log_Z, current_theta), (best_log_Z, best_theta), n_updates = args
+        return n_updates < max_updates and current_log_Z > prev_log_Z and jnp.abs((current_log_Z - prev_log_Z) / prev_log_Z) > min_inc
+    def while_body_fun (args):
+        prev_log_Z, (current_log_Z, current_theta), (best_log_Z, best_theta), n_updates = args
+        prev_log_Z = current_log_Z
+        theta = jax.nn.softmax (params['h'][None,:] + 2 * jnp.einsum('ijy,xy,ij->ix',theta[nbr_idx,:],params['J'],nbr_mask))
+        current_log_Z = ctbn_mean_field_log_Z (seq_mask, nbr_idx, nbr_mask, params, theta)
+        best_theta = jnp.where (current_log_Z > best_log_Z, theta, best_theta)
+        best_log_Z = jnp.maximum (current_log_Z, best_log_Z)
+        return prev_log_Z, (current_log_Z, theta), (best_log_Z, best_theta), n_updates + 1
+    init_state = current_log_Z, theta
+    _prev_log_Z, _final_state, best_state, _final_n_updates = jax.lax.while_loop (while_cond_fun, while_body_fun, (prev_log_Z, init_state, init_state, 0))
+    return best_state
