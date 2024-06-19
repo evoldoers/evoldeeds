@@ -284,7 +284,9 @@ def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, m
     #   F_prev <- F_current, F_current <- new variational bound
     def while_cond_fun (args):
         F_prev, (F_current, rho_solns, mu_solns), (F_best, rho_best, mu_best), n_updates = args
-        return n_updates < max_updates and F_current > F_prev and jnp.abs((F_current - F_prev) / F_prev) > min_inc
+        return jnp.all (jnp.array ([n_updates < max_updates,
+                                    F_current > F_prev,
+                                    jnp.abs((F_current - F_prev) / F_prev) > min_inc]))
     def while_body_fun (args):
         F_prev, (F_current, rho_solns, mu_solns), (F_best, rho_best, mu_best), n_updates = args
         F_prev = F_best
@@ -347,7 +349,7 @@ def ctbn_pseudo_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params, min_inc=1e-3,
 
 # Mean-field approximation to log partition function of continuous-time Bayesian network
 def ctbn_mean_field_log_Z (seq_mask, nbr_idx, nbr_mask, params, theta):
-    E = jnp.einsum('ix,x->',theta,params['h'][None,:]) + jnp.einsum('ix,ijy,xy,ij->',theta,theta[nbr_idx,:],params['J'],nbr_mask)
+    E = jnp.einsum('ix,x->',theta,params['h']) + jnp.einsum('ix,ijy,xy,ij->',theta,theta[nbr_idx,:],params['J'],nbr_mask)
     H = -jnp.einsum('ix->',theta * jnp.log(theta))
     return E + H
 
@@ -356,14 +358,16 @@ def ctbn_variational_log_Z (seq_mask, nbr_idx, nbr_mask, params, min_inc=1e-3, m
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
-    theta = jnp.repeat (jax.nn.softmax (params['h'])[None,:], K)  # (K,N)
+    theta = jnp.repeat (jax.nn.softmax (params['h'])[None,:], K, axis=0)  # (K,N)
     current_log_Z = ctbn_mean_field_log_Z (seq_mask, nbr_idx, nbr_mask, params, theta)
     prev_log_Z = -jnp.inf
     def while_cond_fun (args):
         prev_log_Z, (current_log_Z, current_theta), (best_log_Z, best_theta), n_updates = args
-        return n_updates < max_updates and current_log_Z > prev_log_Z and jnp.abs((current_log_Z - prev_log_Z) / prev_log_Z) > min_inc
+        return jnp.all (jnp.array ([n_updates < max_updates,
+                                    current_log_Z > prev_log_Z,
+                                    jnp.abs((current_log_Z - prev_log_Z) / prev_log_Z) > min_inc]))
     def while_body_fun (args):
-        prev_log_Z, (current_log_Z, current_theta), (best_log_Z, best_theta), n_updates = args
+        prev_log_Z, (current_log_Z, theta), (best_log_Z, best_theta), n_updates = args
         prev_log_Z = current_log_Z
         theta = jax.nn.softmax (params['h'][None,:] + 2 * jnp.einsum('ijy,xy,ij->ix',theta[nbr_idx,:],params['J'],nbr_mask))
         current_log_Z = ctbn_mean_field_log_Z (seq_mask, nbr_idx, nbr_mask, params, theta)

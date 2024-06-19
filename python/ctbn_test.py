@@ -27,14 +27,26 @@ def telegraph (K = 1, lambda1 = 1, lambda2 = 2):
 class TestCTBN (unittest.TestCase):
     # For a single component, the partition function should be sum(exp(h))
     def test_telegraph1_partition (self):
-        C, params = telegraph(K=1)
+        self.do_test_telegraph_partition(1)
+
+    def do_test_telegraph_partition (self, K):
+        C, params = telegraph(K=K)
         seq_mask, nbr_idx, nbr_mask, *_rest = ctbn.get_Markov_blankets(C)
-        logZ_expected = ctbn.logsumexp(params['h'])
+        logZ_expected = K * ctbn.logsumexp(params['h'])
         logZ_exact = ctbn.ctbn_exact_log_Z(seq_mask, nbr_idx, nbr_mask, params)
         self.assertTrue (jnp.allclose(logZ_exact, logZ_expected))
 
     # For two components that are not in contact, the partition function should be sum(exp(-h))^2
-    # For two components that are in contact, the partition function should be reasonably close to its variational lower bound
+    def test_telegraph2_partition (self):
+        self.do_test_telegraph_partition(2)
+
+    # For two components that are in contact, the exact partition function should be greater than its variational lower bound
+    def test_ising2_partition (self):
+        C, params = ising2()
+        seq_mask, nbr_idx, nbr_mask, *_rest = ctbn.get_Markov_blankets(C)
+        logZ_exact = ctbn.ctbn_exact_log_Z(seq_mask, nbr_idx, nbr_mask, params)
+        logZ_variational, theta = ctbn.ctbn_variational_log_Z(seq_mask, nbr_idx, nbr_mask, params)
+        self.assertTrue (jnp.all(logZ_exact > logZ_variational))
 
     # For a single component, the partition function should be equal to its variational lower bound AND its pseudolikelihood
     # For a single component, rho and mu should be equal to the exact posterior
