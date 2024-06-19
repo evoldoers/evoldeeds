@@ -327,4 +327,4 @@ def get_Markov_blankets (xs, ys, C, K=None, M=None):
 def param_regularizer (params, alpha=1e-4):
     return alpha * (jnp.sum (params['J']**2) + jnp.sum (params['h']**2))
 
-# TODO: implement variational lower bound for equilibrium partition function
+# TODO: implement pseudolikelihood (and variational likelihood?) for equilibrium partition function
