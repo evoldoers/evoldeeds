@@ -377,14 +377,14 @@ def ctbn_log_marg_unnorm (xs, seq_mask, nbr_idx, nbr_mask, params):
     return jnp.sum (E_i * seq_mask)
 
 # Variational log-marginal for a continuous-time Bayesian network
-def ctbn_variational_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params, log_Z=None):
+def ctbn_variational_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params, log_Z = None):
     if log_Z is None:
         log_Z = ctbn_variational_log_Z (seq_mask, nbr_idx, nbr_mask, params)
     log_p = ctbn_log_marg_unnorm (xs, seq_mask, nbr_idx, nbr_mask, params)
     return log_p - log_Z
 
 # Exact log-partition function for a continuous-time Bayesian network
-def ctbn_exact_log_Z (seq_mask, nbr_idx, nbr_mask, params, T):
+def ctbn_exact_log_Z (seq_mask, nbr_idx, nbr_mask, params):
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
@@ -393,7 +393,7 @@ def ctbn_exact_log_Z (seq_mask, nbr_idx, nbr_mask, params, T):
     return logsumexp(Es)
 
 # Exact log-marginal for a continuous-time Bayesian network
-def ctbn_exact_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params):
+def ctbn_exact_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params, log_Z = None):
     if log_Z is None:
         log_Z = ctbn_exact_log_Z (seq_mask, nbr_idx, nbr_mask, params)
     log_p = ctbn_log_marg_unnorm (xs, seq_mask, nbr_idx, nbr_mask, params)
