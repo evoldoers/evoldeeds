@@ -1,3 +1,4 @@
+import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.scipy.linalg import expm
@@ -27,6 +28,9 @@ def round_up_to_power (x, base=2):
         x = int (jnp.ceil (base ** jnp.ceil (jnp.log(len) / jnp.log(base))))
     return x
 
+def logsumexp (x, axis=None, keepdims=False):
+    max_x = jnp.max (x, axis=axis, keepdims=True)
+    return jnp.log(jnp.sum(jnp.exp(x - max_x), axis=axis, keepdims=keepdims)) + max_x
 
 # Implements the algorithm from Cohn et al (2010), for protein Potts models parameterized by contact & coupling matrices
 # Cohn et al (2010), JMLR 11:93. Mean Field Variational Approximation for Continuous-Time Bayesian Networks
@@ -332,7 +336,7 @@ def ctbn_pseudo_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params, min_inc=1e-3,
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
     E_iy = params['h'][None,None,:] + jnp.einsum('ijy,ij->iy',params['J'][nbr_idx,:],nbr_mask)  # (K,N)
-    log_Zi = jnp.log(jnp.einsum('iy->i',jnp.exp(E_iy)))  # (K,)
+    log_Zi = logsumexp (E_iy, axis=-1)  # (K,)
     L_i = E_iy[jnp.arange(K),xs] - log_Zi  # (K,N)
     return jnp.sum (L_i * seq_mask)
 
@@ -364,3 +368,34 @@ def ctbn_variational_log_Z (seq_mask, nbr_idx, nbr_mask, params, min_inc=1e-3, m
     init_state = current_log_Z, theta
     _prev_log_Z, _final_state, best_state, _final_n_updates = jax.lax.while_loop (while_cond_fun, while_body_fun, (prev_log_Z, init_state, init_state, 0))
     return best_state
+
+# Unnormalized log-marginal for a continuous-time Bayesian network
+def ctbn_log_marg_unnorm (xs, seq_mask, nbr_idx, nbr_mask, params):
+    K = nbr_idx.shape[0]
+    N = params['S'].shape[0]
+    params = normalise_ctbn_params (params)
+    E_i = params['h'][xs] + jnp.einsum('ij,ij->i',params['J'][xs[:,None],xs[nbr_idx]],nbr_mask)  # (K,)
+    return jnp.sum (E_i * seq_mask)
+
+# Variational log-marginal for a continuous-time Bayesian network
+def ctbn_variational_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params, log_Z=None):
+    if log_Z is None:
+        log_Z = ctbn_variational_log_Z (seq_mask, nbr_idx, nbr_mask, params)
+    log_p = ctbn_log_marg_unnorm (xs, seq_mask, nbr_idx, nbr_mask, params)
+    return log_p - log_Z
+
+# Exact log-partition function for a continuous-time Bayesian network
+def ctbn_exact_log_Z (seq_mask, nbr_idx, nbr_mask, params, T):
+    K = nbr_idx.shape[0]
+    N = params['S'].shape[0]
+    params = normalise_ctbn_params (params)
+    valid_Xs = [xs for xs in np.ndindex(tuple([N]*K)) if np.all(seq_mask * xs == xs)]
+    Es = [ctbn_log_marg_unnorm(X,seq_mask,nbr_idx,nbr_mask,params) for X in valid_Xs]
+    return logsumexp(Es)
+
+# Exact log-marginal for a continuous-time Bayesian network
+def ctbn_exact_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params):
+    if log_Z is None:
+        log_Z = ctbn_exact_log_Z (seq_mask, nbr_idx, nbr_mask, params)
+    log_p = ctbn_log_marg_unnorm (xs, seq_mask, nbr_idx, nbr_mask, params)
+    return log_p - log_Z
