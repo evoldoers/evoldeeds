@@ -36,34 +36,34 @@ def logsumexp (x, axis=None, keepdims=False):
 # Cohn et al (2010), JMLR 11:93. Mean Field Variational Approximation for Continuous-Time Bayesian Networks
 
 # Model:
-# K components, each with N states
-# C = symmetric binary contact matrix (K*K). For i!=j, C_ij=C_ji=1 if i and j are in contact, 0 otherwise. C_ii=0
-# S = symmetric exchangeability matrix (N*N). For i!=j, S_ij=S_ji=rate of substitution from i<->j if i and j are equiprobable. S_ii = -sum_j S_ij
-# J = symmetric coupling matrix (N*N). For i!=j, J_ij=J_ji=interaction strength between components i and j. J_ii = 0
-# h = bias vector (N). h_i=bias of state i
+#  K components, each with N states
+#  C = symmetric binary contact matrix (K*K). For i!=j, C_ij=C_ji=1 if i and j are in contact, 0 otherwise. C_ii=0
+#  S = symmetric exchangeability matrix (N*N). For i!=j, S_ij=S_ji=rate of substitution from i<->j if i and j are equiprobable. S_ii = -sum_j S_ij
+#  J = symmetric coupling matrix (N*N). For i!=j, J_ij=J_ji=interaction strength between components i and j. J_ii = 0
+#  h = bias vector (N). h_i=bias of state i
 
-# Since C is a sparse matrix, with each component having at most M<<K neighbors, we will represent it compactly as follows
-# nbr_idx = sparse neighbor matrix (M*L). nbr_idx[i,n] is the index of the n-th neighbor of component i
-# nbr_mask = sparse neighbor flag matrix (M*L). nbr_mask[i,n] is 1 if nbr_idx[i,n] is a real neighbor, 0 otherwise
+# Since C is a sparse matrix, with each component having at most M<<K neighbors, we represent it compactly as follows:
+#  nbr_idx = sparse neighbor matrix (M*L). nbr_idx[i,n] is the index of the n-th neighbor of component i
+#  nbr_mask = sparse neighbor flag matrix (M*L). nbr_mask[i,n] is 1 if nbr_idx[i,n] is a real neighbor, 0 otherwise
 
 def normalise_ctbn_params (params):
     return { 'S' : symmetrise(row_normalise(jnp.abs(params['S']))),
              'J' : symmetrise(params['J']),
              'h' : params['h'] }
 
-# Endpoint-conditioned variational approximation:
-# mu = (K,N) matrix of mean-field probabilities
-# rho = (K,N) matrix where entry (i,x_i) is the probability of reaching the final state given that component #i is in state x_i
-
-# Rate for substitution x_i->y_i
-# i = 1..K
-# x = (K,) vector of integers from 0..N-1
-# y_i = integer from 0..N-1
+# Rate for substitution x_i->y_i conditioned on neighboring x's
+#  i = 1..K
+#  x = (K,) vector of integers from 0..N-1
+#  y_i = integer from 0..N-1
 def q_k (i, x, y_i, nbr_idx, nbr_mask, params):
     S = params['S']
     J = params['J']
     h = params['h']
     return S[x[i],y_i] * jnp.exp (-h[y_i] - 2*jnp.dot (nbr_mask[i], J[y_i,x[nbr_idx[i]]]))
+
+# Endpoint-conditioned variational approximation:
+#  mu = (K,N) matrix of mean-field probabilities
+#  rho = (K,N) matrix where entry (i,x_i) is the probability of reaching the final state given that component #i is in state x_i
 
 # Mean-field averaged rates for a continuous-time Bayesian network
 # Returns (A,N,N) matrix where entry (a,x_{idx[a]},y_{idx[a]}) is mean-field averaged rate matrix for component idx[a]
@@ -144,7 +144,6 @@ def q_joint (nbr_idx, nbr_mask, params):
     Q = jax.vmap (lambda x: jax.vmap (lambda y: get_rate(x,y))(states))(states)
     return row_normalise(Q)
 
-# gamma
 # Returns (A,N,N) matrix where entry (k,x_{idx[a]},y_{idx[a]}) is the joint probability of transition x_{idx[a]}->y_{idx[a]} for component idx[a]
 def gamma (idx, nbr_idx, nbr_mask, params, mu, rho):
     return jnp.einsum ('ax,axy,ay,ay->axy', mu[idx], q_tilde(idx,nbr_idx,nbr_mask,params,mu), rho[idx], 1/mu[idx])
