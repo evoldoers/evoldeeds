@@ -23,9 +23,9 @@ def row_normalise (matrix):
 
 def round_up_to_power (x, base=2):
     if base == 2:  # avoid doubling length due to precision errors
-        x = 1 << (len-1).bit_length()
+        x = 1 << (x-1).bit_length()
     else:
-        x = int (jnp.ceil (base ** jnp.ceil (jnp.log(len) / jnp.log(base))))
+        x = int (jnp.ceil (base ** jnp.ceil (jnp.log(x) / jnp.log(base))))
     return x
 
 def logsumexp (x, axis=None, keepdims=False):
@@ -307,23 +307,29 @@ def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, m
     return best_state
 
 # Given sequences xs,ys and contact matrix C, return padded xs,ys along with seq_mask,nbr_idx,nbr_mask
-def get_Markov_blankets (xs, ys, C, K=None, M=None):
-    K_prepad = len(xs)
-    assert len(ys) == K_prepad, "xs and ys must have the same length"
-    assert C.shape == (K_prepad,K_prepad), "C must be a square matrix of the same size as xs"
+def get_Markov_blankets (C, xs=None, ys=None, K=None, M=None):
+    K_prepad = C.shape[0]
+    assert C.shape == (K_prepad,K_prepad), "C must be a square matrix"
+    if xs is not None:
+        assert len(xs) == K_prepad, "length of xs must equal size of C"
+    if ys is not None:
+        assert len(ys) == K_prepad, "length of ys must equal size of C"
     if K is None:
         K = round_up_to_power (K_prepad)
-    nbr_idx_list = [C[i,:].nonzero() for i in range(K_prepad)]
+    nbr_idx_list = [C[i,:].nonzero()[0] for i in range(K_prepad)]
     if M is None:
         M = round_up_to_power (max ([len(nbr_idx) for nbr_idx in nbr_idx_list]))
     else:
         assert M >= max ([len(nbr_idx) for nbr_idx in nbr_idx_list]), "M must be at least as large as the largest number of neighbors"
-    seq_mask = jnp.array ([i < K_prepad for i in range(K)])
+    seq_idx = jnp.arange(K)
+    seq_mask = jnp.where(seq_idx < K_prepad, 1, 0)
     nbr_mask = jnp.array ([[1] * len(nbr_idx) + [0] * (M - len(nbr_idx)) for nbr_idx in nbr_idx_list] + [[0] * M] * (K - K_prepad))
-    nbr_idx = jnp.array ([nbr_idx + [0] * (M - len(nbr_idx)) for nbr_idx in nbr_idx_list])
-    xs = xs + [0] * (K - K_prepad)
-    ys = ys + [0] * (K - K_prepad)
-    return xs, ys, seq_mask, nbr_idx, nbr_mask
+    nbr_idx = jnp.array ([jnp.concatenate([nbrs,jnp.zeros(M - len(nbrs),dtype=nbrs.dtype)]) for nbrs in nbr_idx_list])
+    if xs is not None:
+        xs = xs + [0] * (K - K_prepad)
+    if ys is not None:
+        ys = ys + [0] * (K - K_prepad)
+    return seq_mask, nbr_idx, nbr_mask, xs, ys
 
 # Weak L2 regularizer for J and h
 def ctbn_param_regularizer (params, alpha=1e-4):
@@ -370,10 +376,10 @@ def ctbn_variational_log_Z (seq_mask, nbr_idx, nbr_mask, params, min_inc=1e-3, m
 
 # Unnormalized log-marginal for a continuous-time Bayesian network
 def ctbn_log_marg_unnorm (xs, seq_mask, nbr_idx, nbr_mask, params):
-    K = nbr_idx.shape[0]
+    K, M = nbr_idx.shape
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
-    E_i = params['h'][xs] + jnp.einsum('ij,ij->i',params['J'][xs[:,None],xs[nbr_idx]],nbr_mask)  # (K,)
+    E_i = params['h'][xs] + jnp.einsum('ij,ij->i',params['J'][jnp.repeat(xs[:,None],M,axis=-1),xs[nbr_idx]],nbr_mask)  # (K,)
     return jnp.sum (E_i * seq_mask)
 
 # Variational log-marginal for a continuous-time Bayesian network
@@ -388,7 +394,8 @@ def ctbn_exact_log_Z (seq_mask, nbr_idx, nbr_mask, params):
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
-    valid_Xs = [xs for xs in np.ndindex(tuple([N]*K)) if np.all(seq_mask * xs == xs)]
+    Xs = [jnp.array(X) for X in np.ndindex(tuple([N]*K))]
+    valid_Xs = [X for X in Xs if np.all(seq_mask * X == X)]
     Es = jnp.array ([ctbn_log_marg_unnorm(X,seq_mask,nbr_idx,nbr_mask,params) for X in valid_Xs])
     return logsumexp(Es)
 
