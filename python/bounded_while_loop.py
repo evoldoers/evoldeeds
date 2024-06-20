@@ -3,6 +3,24 @@
 
 import jax
 import jax.lax as lax
+import jax.numpy as jnp
+
+def bounded_optimize(score_fun, update_fun, init_state, max_steps, min_inc=1e-3):
+    def cond_fun (args):
+        prev_score, (current_score, current_state), (best_score, best_state) = args
+        return jnp.all (jnp.array ([current_score > prev_score, 
+                                    jnp.abs((current_score - best_score) / best_score) > min_inc]))
+    def body_fun (args):
+        prev_score, (current_score, current_state), (best_score, best_state) = args
+        prev_score = current_score
+        current_state = update_fun (current_state)
+        current_score = score_fun (current_state)
+        keep = lambda a, b: lax.select(current_score > best_score, a, b)
+        best_score, best_state = jax.tree_util.tree_map(keep, (best_score, best_state), (current_score, current_state))
+        return prev_score, (current_score, current_state), (best_score, best_state)
+    init_score_state = (score_fun(init_state), init_state)
+    return bounded_while_loop (cond_fun, body_fun, (-jnp.inf, init_score_state, init_score_state), max_steps)[2]
+
 
 def bounded_while_loop(cond_fun, body_fun, init_val, max_steps):
     """API as `lax.while_loop`, except that it takes an integer `max_steps` argument."""
@@ -22,7 +40,7 @@ def _while_loop(cond_fun, body_fun, data, max_steps):
         pred, val = data
         new_val = body_fun(val)
         keep = lambda a, b: lax.select(pred, a, b)
-        new_val = jax.tree_map(keep, new_val, val)
+        new_val = jax.tree_util.tree_map(keep, new_val, val)
         return cond_fun(new_val), new_val
     else:
 

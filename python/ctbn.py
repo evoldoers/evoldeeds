@@ -4,6 +4,8 @@ import jax.numpy as jnp
 from jax.scipy.linalg import expm
 import diffrax
 
+from bounded_while_loop import bounded_optimize
+
 smallest_float32 = jnp.finfo('float32').smallest_normal
 
 def product(x,axis=None,keepdims=False):
@@ -263,7 +265,7 @@ def solve_mu (i, mu_i_0, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_soln
 
 # Calculate the variational likelihood for an endpoint-conditioned continuous-time Bayesian network
 # This is a strict lower bound for log P(X_T=ys|X_0=xs,T,params)
-def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-3, max_updates=3):
+def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-3, max_updates=4):
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
@@ -272,41 +274,26 @@ def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, m
     q = q_single (params)
     rho_solns = [ExactRho (q, T, xs[i], ys[i]) for i in range(K)]
     mu_solns = [ExactMu (q, T, xs[i], ys[i]) for i in range(K)]
-    # initialize F_current as variational bound for initial mu and rho, and F_prev as -Infinity
-    F_prev = -jnp.inf
-    F_current = solve_F (seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
     # create arrays of boundary conditions for mu(0) and rho(T)
     mu_0 = jnp.eye(N)[xs]
     rho_T = jnp.eye(N)[ys]
     # while (F_current - F_prev)/F_prev > minimum relative increase:
-    #  loop over component indices i:
+    #  for component indices i:
     #   solve rho and then mu for component i, using diffrax, and replace single-component posteriors with diffrax Solution's
     #   F_prev <- F_current, F_current <- new variational bound
-    def while_cond_fun (args):
-        F_prev, (F_current, rho_solns, mu_solns), (F_best, rho_best, mu_best), n_updates = args
-        return jnp.all (jnp.array ([n_updates < max_updates,
-                                    F_current > F_prev,
-                                    jnp.abs((F_current - F_prev) / F_prev) > min_inc]))
-    def while_body_fun (args):
-        F_prev, (F_current, rho_solns, mu_solns), (F_best, rho_best, mu_best), n_updates = args
-        F_prev = F_best
-        F_current = solve_F (seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
-        rho_solns, mu_solns = jax.lax.fori_loop (0, N, loop_body_fun, (rho_solns, mu_solns))
-        old_best = lambda: (F_best, rho_best, mu_best)
-        new_best = lambda: (F_current, rho_solns, mu_solns)
-        F_best, rho_best, mu_best = jax.lax.cond (F_current > F_best, new_best, old_best)
-        return F_prev, (F_current, rho_solns, mu_solns), (F_best, rho_best, mu_best), n_updates + 1
+    def score_fun (state):
+        rho_solns, mu_solns = state
+        return solve_F (seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
+    def update_fun (state):
+        return jax.lax.fori_loop (0, N, loop_body_fun, state)
     def loop_body_fun (i, args):
         rho_solns, mu_solns = args
-        i = N - 1 - i  # finish with component #0
         new_rho_i = solve_rho (i, rho_T[i,:], seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
         rho_solns = [new_rho_i if k==i else old_rho_i for k, old_rho_i in enumerate(rho_solns)]
         new_mu_i = solve_mu (i, mu_0[i,:], seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
         mu_solns = [new_mu_i if k==i else old_mu_i for k, old_mu_i in enumerate(mu_solns)]
         return rho_solns, mu_solns
-    init_state = F_current, rho_solns, mu_solns
-    _F_prev, _final_state, best_state, _final_n_updates = jax.lax.while_loop (while_cond_fun, while_body_fun, (F_prev, init_state, init_state, 0))
-    return best_state
+    return bounded_optimize(score_fun, update_fun, (rho_solns, mu_solns), max_updates, min_inc=min_inc)
 
 # Given sequences xs,ys and contact matrix C, return padded xs,ys along with seq_mask,nbr_idx,nbr_mask
 def get_Markov_blankets (C, xs=None, ys=None, K=None, M=None):
@@ -338,7 +325,7 @@ def ctbn_param_regularizer (params, alpha=1e-4):
     return alpha * (jnp.sum (params['J']**2) + jnp.sum (params['h']**2))
 
 # Log-pseudolikelihood for a continuous-time Bayesian network
-def ctbn_pseudo_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params, min_inc=1e-3, max_updates=3):
+def ctbn_pseudo_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params):
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
@@ -354,29 +341,16 @@ def ctbn_mean_field_log_Z (seq_mask, nbr_idx, nbr_mask, params, theta):
     return E + H
 
 # Variational lower bound for log partition function of continuous-time Bayesian network
-def ctbn_variational_log_Z (seq_mask, nbr_idx, nbr_mask, params, min_inc=1e-3, max_updates=3):
+def ctbn_variational_log_Z (seq_mask, nbr_idx, nbr_mask, params, min_inc=1e-3, max_updates=4):
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
     theta = jnp.repeat (jax.nn.softmax (params['h'])[None,:], K, axis=0)  # (K,N)
-    current_log_Z = ctbn_mean_field_log_Z (seq_mask, nbr_idx, nbr_mask, params, theta)
-    prev_log_Z = -jnp.inf
-    def while_cond_fun (args):
-        prev_log_Z, (current_log_Z, current_theta), (best_log_Z, best_theta), n_updates = args
-        return jnp.all (jnp.array ([n_updates < max_updates,
-                                    current_log_Z > prev_log_Z,
-                                    jnp.abs((current_log_Z - prev_log_Z) / prev_log_Z) > min_inc]))
-    def while_body_fun (args):
-        prev_log_Z, (current_log_Z, theta), (best_log_Z, best_theta), n_updates = args
-        prev_log_Z = current_log_Z
-        theta = jax.nn.softmax (params['h'][None,:] + 2 * jnp.einsum('ijy,xy,ij->ix',theta[nbr_idx,:],params['J'],nbr_mask))
-        current_log_Z = ctbn_mean_field_log_Z (seq_mask, nbr_idx, nbr_mask, params, theta)
-        best_theta = jnp.where (current_log_Z > best_log_Z, theta, best_theta)
-        best_log_Z = jnp.maximum (current_log_Z, best_log_Z)
-        return prev_log_Z, (current_log_Z, theta), (best_log_Z, best_theta), n_updates + 1
-    init_state = current_log_Z, theta
-    _prev_log_Z, _final_state, best_state, _final_n_updates = jax.lax.while_loop (while_cond_fun, while_body_fun, (prev_log_Z, init_state, init_state, 0))
-    return best_state
+    def score_fun (theta):
+        return ctbn_mean_field_log_Z (seq_mask, nbr_idx, nbr_mask, params, theta)
+    def update_fun (theta):
+        return jax.nn.softmax (params['h'][None,:] + 2 * jnp.einsum('ijy,xy,ij->ix',theta[nbr_idx,:],params['J'],nbr_mask))
+    return bounded_optimize(score_fun, update_fun, theta, max_updates, min_inc=min_inc)
 
 # Unnormalized log-marginal for a continuous-time Bayesian network
 def ctbn_log_marg_unnorm (xs, seq_mask, nbr_idx, nbr_mask, params):
