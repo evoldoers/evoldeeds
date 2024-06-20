@@ -373,9 +373,9 @@ def ctbn_exact_log_Z (seq_mask, nbr_idx, nbr_mask, params):
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
     Xs = [jnp.array(X) for X in np.ndindex(tuple([N]*K))]
-    valid_Xs = [X for X in Xs if np.all(seq_mask * X == X)]
-    Es = jnp.array ([ctbn_log_marg_unnorm(X,seq_mask,nbr_idx,nbr_mask,params) for X in valid_Xs])
-    return logsumexp(Es)
+    X_is_valid = jnp.array ([jnp.all(seq_mask * X == X) for X in Xs])
+    Es = jnp.array ([ctbn_log_marg_unnorm(X,seq_mask,nbr_idx,nbr_mask,params) for X in Xs])
+    return logsumexp (jnp.where(X_is_valid,Es,-jnp.inf))
 
 # Exact log-marginal for a continuous-time Bayesian network
 def ctbn_exact_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params, log_Z = None):
