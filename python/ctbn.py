@@ -137,7 +137,7 @@ def q_joint (nbr_idx, nbr_mask, params):
     N = params['S'].shape[0]
     K,M = nbr_idx.shape
     def get_components (x):
-        return jnp.array ([(x//(N**j))%N for j in range(K)])
+        return idx_to_seq (x, N, K)
     def get_rate (xs, ys):
         diffs = jnp.where (xs == ys, 0, 1)
         i = jnp.argmax (diffs)
@@ -145,6 +145,15 @@ def q_joint (nbr_idx, nbr_mask, params):
     states = jax.vmap (get_components)(jnp.arange(N**K))
     Q = jax.vmap (lambda x: jax.vmap (lambda y: get_rate(x,y))(states))(states)
     return row_normalise(Q)
+
+def idx_to_seq (idx, N, K):
+    return jnp.array ([idx // (N**j) % N for j in range(K)])
+                       
+def seq_to_idx (seq, N):
+    return jnp.sum (jnp.array ([seq[j] * (N**j) for j in range(seq.shape[0])]))
+
+def all_seqs (N, K):
+    return [jnp.array(X) for X in np.ndindex(tuple([N]*K))]
 
 # Returns (A,N,N) matrix where entry (k,x_{idx[a]},y_{idx[a]}) is the joint probability of transition x_{idx[a]}->y_{idx[a]} for component idx[a]
 def gamma (idx, nbr_idx, nbr_mask, params, mu, rho):
@@ -224,42 +233,37 @@ def solve_F (seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T, rtol=1
     term = diffrax.ODETerm (F_term)
     solver = diffrax.Dopri5()
     controller = diffrax.PIDController (rtol=rtol, atol=atol)
-    return diffrax.diffeqsolve (term, solver, t0=0, t1=T, dt0=None, y0=0,
+    return diffrax.diffeqsolve (terms=term, solver=solver, t0=0, t1=T, dt0=None, y0=0,
                                 args=(seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns),
                                 stepsize_controller = controller)
 
-def make_rho_term (i, seq_mask):
-    def rho_term (t, rho_i_t, args):
-        nbr_idx, nbr_mask, params, mu_solns, rho_solns = args
-        mu, rho = eval_mu_rho (mu_solns, rho_solns, t)
-        rho = rho.at(i).set(rho_i_t)
-        return seq_mask[i] * rho_deriv (i, nbr_idx, nbr_mask, params, mu, rho)
-    return rho_term
+def rho_term (t, rho_i_t, args):
+    (i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns) = args
+    mu, rho = eval_mu_rho (mu_solns, rho_solns, t)
+    rho = rho.at[i].set(rho_i_t)
+    return seq_mask[i] * rho_deriv (i, nbr_idx, nbr_mask, params, mu, rho)
 
 def solve_rho (i, rho_i_T, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T, rtol=1e-3, atol=1e-6):
-    N = params['S'].shape[0]
-    term = diffrax.ODETerm (make_rho_term(i, seq_mask))
+    term = diffrax.ODETerm (rho_term)
     solver = diffrax.Dopri5()
     controller = diffrax.PIDController (rtol=rtol, atol=atol)
-    return diffrax.diffeqsolve (term, solver, t0=T, t1=0, dt0=None, y0 = rho_i_T,
-                                args=(nbr_idx, nbr_mask, params, mu_solns, rho_solns),
+    return diffrax.diffeqsolve (terms=term, solver=solver, t0=T, t1=0, dt0=None, y0 = rho_i_T,
+                                args=(i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns),
                                 stepsize_controller = controller,
                                 saveat = diffrax.SaveAt(dense=True))
 
-def make_mu_term (i, seq_mask):
-    def mu_term (t, mu_i_t, args):
-        nbr_idx, nbr_mask, params, mu_solns, rho_solns = args
-        mu, rho = eval_mu_rho (mu_solns, rho_solns, t)
-        mu = mu.at(i).set(mu_i_t)
-        return seq_mask[i] * mu_deriv (i, nbr_idx, nbr_mask, params, mu, rho)
-    return mu_term
+def mu_term (t, mu_i_t, args):
+    i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns = args
+    mu, rho = eval_mu_rho (mu_solns, rho_solns, t)
+    mu = mu.at[i].set(mu_i_t)
+    return seq_mask[i] * mu_deriv (i, nbr_idx, nbr_mask, params, mu, rho)
 
 def solve_mu (i, mu_i_0, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T, rtol=1e-3, atol=1e-6):
-    term = diffrax.ODETerm (make_mu_term(i, seq_mask))
+    term = diffrax.ODETerm (mu_term)
     solver = diffrax.Dopri5()
     controller = diffrax.PIDController (rtol=rtol, atol=atol)
-    return diffrax.diffeqsolve (term, solver, t0=0, t1=T, dt0=None, y0=mu_i_0,
-                                args=(nbr_idx, nbr_mask, params, mu_solns, rho_solns),
+    return diffrax.diffeqsolve (terms=term, solver=solver, t0=0, t1=T, dt0=None, y0=mu_i_0,
+                                args=(i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns),
                                 stepsize_controller = controller,
                                 saveat = diffrax.SaveAt(dense=True))
 
@@ -374,7 +378,7 @@ def ctbn_exact_log_Z (seq_mask, nbr_idx, nbr_mask, params):
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
-    Xs = [jnp.array(X) for X in np.ndindex(tuple([N]*K))]
+    Xs = all_seqs(N,K)
     X_is_valid = jnp.array ([jnp.all(seq_mask * X == X) for X in Xs])
     Es = jnp.array ([ctbn_log_marg_unnorm(X,seq_mask,nbr_idx,nbr_mask,params) for X in Xs])
     return logsumexp (jnp.where(X_is_valid,Es,-jnp.inf))
