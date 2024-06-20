@@ -44,11 +44,15 @@ def replace_nth (old_arr, n, new_nth_elt):
 # Cohn et al (2010), JMLR 11:93. Mean Field Variational Approximation for Continuous-Time Bayesian Networks
 
 # Model:
-#  K components, each with N states
-#  C = symmetric binary contact matrix (K*K). For i!=j, C_ij=C_ji=1 if i and j are in contact, 0 otherwise. C_ii=0
+#  N = number of states (amino acids)
 #  S = symmetric exchangeability matrix (N*N). For i!=j, S_ij=S_ji=rate of substitution from i<->j if i and j are equiprobable. S_ii = -sum_j S_ij
 #  J = symmetric coupling matrix (N*N). For i!=j, J_ij=J_ji=interaction strength between components i and j. J_ii = 0
 #  h = bias vector (N). h_i=bias of state i
+
+# Data-dependent aspects of model:
+#  K = # of components, each having N states (the sequence length)
+#  C = symmetric binary contact matrix (K*K). For i!=j, C_ij=C_ji=1 if i and j are in contact, 0 otherwise. C_ii=0
+
 
 # Since C is a sparse matrix, with each component having at most M<<K neighbors, we represent it compactly as follows:
 #  nbr_idx = sparse neighbor matrix (M*L). nbr_idx[i,n] is the index of the n-th neighbor of component i
