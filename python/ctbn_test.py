@@ -166,7 +166,7 @@ class TestCTBN (unittest.TestCase):
         ts = jnp.linspace(0,T,dt_steps+1)
         mu_t = jnp.array ([[mu.evaluate(t) for mu in mu_elbo] for t in ts])
         for t, mu in zip(ts,mu_t):
-            print(f"t={t}",*list(f" P(x{i}=1)={mu_i[1].item()}" for i,mu_i in enumerate(mu)))
+            print(f"t={t}",*list(f" P(x{i})={mu_i[1].item()}" for i,mu_i in enumerate(mu)))
 
     # For two components that are in contact, reproduce Figure 3(b)-(d) from Cohn et al (2010)
 
