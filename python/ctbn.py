@@ -181,9 +181,9 @@ def psi (i, nbr_idx, nbr_mask, params, mu, rho):
     gammas = gamma(nbr_idx[i], nbr_idx, nbr_mask, params, mu, rho)  # (M,N,N)
     qbar_cond = q_bar_cond(i,nbr_idx,nbr_mask,params,mu)  # (M,N,N,N)
     qtilde_cond = q_tilde_cond(i,nbr_idx,nbr_mask,params,mu)  # (M,N,N,N)
-    log_qtilde_cond = -safe_log (jnp.where (qtilde_cond < 0, 1, qtilde_cond))  # (M,N,N,N)
-#    jax.debug.print ("gammas={g} mu[nbr_idx[i]]={mu} qbar_cond={qb} qtilde_cond={qt} log_qtilde_cond={lq}", g=gammas, mu=mu[nbr_idx[i]], qb=qbar_cond, qt=qtilde_cond, lq=log_qtilde_cond)
-    return -jnp.einsum('jy,jxyz,j->x',mu[nbr_idx[i]],qbar_cond,nbr_mask[i]) + jnp.einsum('jxy,jxyz,j->x',gammas,log_qtilde_cond,nbr_mask[i])
+    log_qtilde_cond = safe_log (jnp.where (qtilde_cond < 0, 1, qtilde_cond))  # (M,N,N,N)
+#    jax.debug.print ("i={i} gammas={g} mu[nbr_idx[i]]={mu} qbar_cond={qb} qtilde_cond={qt} log_qtilde_cond={lq}", i=i, g=gammas, mu=mu[nbr_idx[i]], qb=qbar_cond, qt=qtilde_cond, lq=log_qtilde_cond)
+    return -jnp.einsum('jy,jxyz,j->x',mu[nbr_idx[i]],qbar_cond,nbr_mask[i]) + jnp.einsum('jyz,jxyz,j->x',gammas,log_qtilde_cond,nbr_mask[i])
 
 def rho_deriv (i, nbr_idx, nbr_mask, params, mu, rho):
     K = mu.shape[0]
@@ -233,7 +233,7 @@ class ExactRho:
         N = q.shape[0]
         assert q.shape == (N,N)
         self.N = N
-        self.q = q
+        self.q = row_normalise(q)
         self.T = T
         self.x = x
         self.y = y
@@ -241,14 +241,14 @@ class ExactRho:
 
     def evaluate (self, t):
         rho = expm(self.q*(self.T-t)) [:, self.y]  # (N,)
-        return rho
+        return jnp.minimum(rho,1)
 
 class ExactMu (ExactRho):
     def evaluate (self, t):
         rho = super().evaluate (t)
         exp_qt = expm(self.q*t) [self.x, :]  # (N,)
         mu = exp_qt * rho / self.exp_qT
-        return mu
+        return mu / jnp.sum(mu)
 
 # Dummy class that returns fixed solution for mu and/or rho
 class FixedSolution():
@@ -286,27 +286,29 @@ def solve_F (seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T, rtol=1
     return F_soln.ys[-1]
 
 def rho_term (t, rho_i_t, args):
-    (i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns) = args
+    i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T = args
     mu, rho = eval_mu_rho (mu_solns, rho_solns, t)
+    mu = jnp.where (t < T, mu, rho)  # guard against explosion at boundary
+    old_rho_i_t = rho[i,:]
     rho = rho.at[i].set(rho_i_t)
-#    jax.debug.print ("t={t} mu={mu} rho={rho} deriv={deriv}", t=t, mu=mu, rho=rho, deriv=rho_deriv (i, nbr_idx, nbr_mask, params, mu, rho))
-    return seq_mask[i] * rho_deriv (i, nbr_idx, nbr_mask, params, mu, rho)
+    _rho_deriv = rho_deriv (i, nbr_idx, nbr_mask, params, mu, rho)
+#    jax.debug.print ("t={t} old_rho[{i}]={old} new_rho[{i}]={new} deriv={deriv}\n mu={mu}\n rho={rho}", t=t, mu=mu, rho=rho, deriv=_rho_deriv, old=old_rho_i_t, new=rho_i_t, i=i)
+    return seq_mask[i] * _rho_deriv
 
 def solve_rho (i, rho_i_T, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T, rtol=1e-3, atol=1e-6):
     term = diffrax.ODETerm (rho_term)
     solver = diffrax.Dopri5()
     controller = diffrax.PIDController (rtol=rtol, atol=atol)
     return diffrax.diffeqsolve (terms=term, solver=solver, t0=T, t1=0, dt0=None, y0 = rho_i_T,
-                                args=(i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns),
+                                args=(i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T),
                                 stepsize_controller = controller,
                                 saveat = diffrax.SaveAt(dense=True))
 
 def mu_term (t, mu_i_t, args):
     i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T = args
     mu, rho = eval_mu_rho (mu_solns, rho_solns, t)
-    rho_i_t = rho[i,:]
-    mu_i_t = jnp.where (t < T, mu_i_t, rho_i_t)  # guard against explosion at boundary
     mu = mu.at[i].set(mu_i_t)
+    mu = jnp.where (t < T, mu, rho)  # guard against explosion at boundary
 #    jax.debug.print ("t={t} mu={mu} rho={rho} gamma={g} deriv={deriv}", t=t, mu=mu, rho=rho, deriv=mu_deriv (i, nbr_idx, nbr_mask, params, mu, rho), g=gamma(jnp.array([i]), nbr_idx, nbr_mask, params, mu, rho)[0,:,:])
     return seq_mask[i] * mu_deriv (i, nbr_idx, nbr_mask, params, mu, rho)
 
@@ -321,7 +323,7 @@ def solve_mu (i, mu_i_0, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_soln
 
 # Calculate the variational likelihood for an endpoint-conditioned continuous-time Bayesian network
 # This is a strict lower bound for log P(X_T=ys|X_0=xs,T,params)
-def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-3, max_updates=4):
+def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-3, max_updates=4096):
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
@@ -329,11 +331,11 @@ def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, m
     mu_0 = jnp.eye(N)[xs]
     rho_T = jnp.eye(N)[ys]
     # create dummy mu, rho solutions
-#    q1 = q_single_offdiag (params)
-#    init_rho_solns = [ExactRho (q1, T, xs[i], ys[i]) for i in range(K)]
-#    init_mu_solns = [ExactMu (q1, T, xs[i], ys[i]) for i in range(K)]
-    init_mu_solns = [FixedSolution(mu_0_k) for mu_0_k in mu_0]
-    init_rho_solns = [FixedSolution(rho_T_k) for rho_T_k in rho_T]
+    q1 = q_single (params)
+    init_rho_solns = [ExactRho (q1, T, xs[i], ys[i]) for i in range(K)]
+    init_mu_solns = [ExactMu (q1, T, xs[i], ys[i]) for i in range(K)]
+#    init_mu_solns = [FixedSolution(mu_0_k) for mu_0_k in mu_0]
+#    init_rho_solns = [FixedSolution(rho_T_k) for rho_T_k in rho_T]
     # do one update so (rho_solns,mu_solns) are diffrax AbstractPath's, to keep types uniform inside while loop
     rho_solns = [solve_rho (i, rho_T[i,:], seq_mask, nbr_idx, nbr_mask, params, init_mu_solns, init_rho_solns, T) for i in range(K)]
     mu_solns = [solve_mu (i, mu_0[i,:], seq_mask, nbr_idx, nbr_mask, params, init_mu_solns, rho_solns, T) for i in range(K)]
@@ -344,7 +346,6 @@ def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, m
     def score_fun (state):
         mu_solns, rho_solns = state
         F = solve_F (seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
-#        jax.debug.print("F={F}",F=F)
         return F
     def update_fun (state):
         return jax.lax.fori_loop (0, N, loop_body_fun, state)

@@ -143,7 +143,31 @@ class TestCTBN (unittest.TestCase):
             self.assertTrue (self.close_over_domain(mu_exact, mu_elbo[k], T))
             self.assertTrue (self.close_over_domain(rho_exact, rho_elbo[k], T))
 
+    # For two components that are not in contact, the variational lower bound should be equal to the log-likelihood
+    def test_telegraph2_variational (self):
+        self.do_test_telegraph_variational ([0,0], [1,1], 1.0)
+
     # For two components that are in contact, F should be a reasonably close lower bound for the log-likelihood
+    def test_ising2_variational (self):
+        self.do_test_ising2_variational ([0,1], [1,0], 1.0)
+
+    def do_test_ising2_variational (self, xs, ys, T):
+        C, params = ising2()
+        seq_mask, nbr_idx, nbr_mask, *_rest = ctbn.get_Markov_blankets(C)
+        xs = jnp.array(xs)
+        ys = jnp.array(ys)
+        xidx = ctbn.seq_to_idx(xs,2)
+        yidx = ctbn.seq_to_idx(ys,2)
+        q_joint = ctbn.q_joint(nbr_idx, nbr_mask, params)
+        ll_exact = jnp.log(expm(T * q_joint)[xidx, yidx])
+        log_elbo, (mu_elbo, rho_elbo) = ctbn.ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-6)
+        self.assertTrue (ll_exact > log_elbo)
+        dt_steps = 100
+        ts = jnp.linspace(0,T,dt_steps+1)
+        mu_t = jnp.array ([[mu.evaluate(t) for mu in mu_elbo] for t in ts])
+        for t, mu in zip(ts,mu_t):
+            print(f"t={t}",*list(f" P(x{i}=1)={mu_i[1].item()}" for i,mu_i in enumerate(mu)))
+
     # For two components that are in contact, reproduce Figure 3(b)-(d) from Cohn et al (2010)
 
     # PARAMETER FITTING
