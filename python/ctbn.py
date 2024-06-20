@@ -34,7 +34,7 @@ def round_up_to_power (x, base=2):
     return x
 
 def logsumexp (x, axis=None, keepdims=False):
-    max_x = jnp.max (x, axis=axis, keepdims=True)
+    max_x = jnp.max (x, axis=axis, keepdims=keepdims)
     return jnp.log(jnp.sum(jnp.exp(x - max_x), axis=axis, keepdims=keepdims)) + max_x
 
 def replace_nth (old_arr, n, new_nth_elt):
@@ -214,6 +214,19 @@ def F_deriv (seq_mask, nbr_idx, nbr_mask, params, mu, rho):
 #    jax.debug.print("mu={mu} rho={rho} dF={dF} qbar={qbar} gamma={gamma} gamma_coeff={gamma_coeff}", mu=mu, rho=rho, dF=dF, qbar=qbar, gamma=_gamma, gamma_coeff=gamma_coeff)
     return dF
 
+# Exact equilibrium distribution for a complete rate matrix
+def exact_eqm (q):
+    N = q.shape[0]
+    evals, evecs_r = jnp.linalg.eig(q)
+    evals = jnp.abs(evals)
+    min_eval = jnp.min(evals)  # the eigenvalue closest to zero can be assumed to correspond to the equilibrium
+    min_eval_idx = jnp.where(jnp.isclose(evals,min_eval))[0]
+    assert min_eval_idx.size == 1, f"Can't handle orthogonal equilibria: evals {evals[min_eval_idx]}"
+    evecs_l = jnp.linalg.inv(evecs_r)
+    eqm = jnp.real(evecs_l[min_eval_idx[0],:])
+    eqm /= jnp.sum(eqm)
+    return eqm
+
 # Exact posterior for a complete rate matrix
 class ExactRho:
     def __init__ (self, q, T, x, y):
@@ -378,7 +391,7 @@ def ctbn_pseudo_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params):
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
-    E_iy = params['h'][None,None,:] + jnp.einsum('ijy,ij->iy',params['J'][nbr_idx,:],nbr_mask)  # (K,N)
+    E_iy = params['h'][None,:] + jnp.einsum('ijy,ij->iy',params['J'][nbr_idx,:],nbr_mask)  # (K,N)
     log_Zi = logsumexp (E_iy, axis=-1)  # (K,)
     L_i = E_iy[jnp.arange(K),xs] - log_Zi  # (K,N)
     return jnp.sum (L_i * seq_mask)
@@ -424,7 +437,7 @@ def ctbn_exact_log_Z (seq_mask, nbr_idx, nbr_mask, params):
     Xs = all_seqs(N,K)
     X_is_valid = jnp.array ([jnp.all(seq_mask * X == X) for X in Xs])
     Es = jnp.array ([ctbn_log_marg_unnorm(X,seq_mask,nbr_idx,nbr_mask,params) for X in Xs])
-    return logsumexp (jnp.where(X_is_valid,Es,-jnp.inf))
+    return logsumexp(jnp.where(X_is_valid,Es,-jnp.inf)).item()
 
 # Exact log-marginal for a continuous-time Bayesian network
 def ctbn_exact_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params, log_Z = None):

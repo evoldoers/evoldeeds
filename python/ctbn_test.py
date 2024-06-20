@@ -30,7 +30,10 @@ def telegraph (K = 1, lambda1 = 1, lambda2 = 2):
     return C, params
 
 class TestCTBN (unittest.TestCase):
-    # For a single component, the partition function should be sum(exp(h))
+
+    # EQUILIBRIUM STATISTICS (single sequence)
+
+    # For a single component, the partition function and its variational bound should be sum(exp(h))
     def test_telegraph1_partition (self):
         self.do_test_telegraph_partition(1)
 
@@ -39,9 +42,11 @@ class TestCTBN (unittest.TestCase):
         seq_mask, nbr_idx, nbr_mask, *_rest = ctbn.get_Markov_blankets(C)
         logZ_expected = K * ctbn.logsumexp(params['h'])
         logZ_exact = ctbn.ctbn_exact_log_Z(seq_mask, nbr_idx, nbr_mask, params)
+        logZ_variational, theta = ctbn.ctbn_variational_log_Z(seq_mask, nbr_idx, nbr_mask, params)
         self.assertTrue (jnp.allclose(logZ_exact, logZ_expected))
+        self.assertTrue (jnp.allclose(logZ_variational, logZ_expected))
 
-    # For two components that are not in contact, the partition function should be sum(exp(-h))^2
+    # For two components that are not in contact, the partition function and its variational bound should be sum(exp(-h))^2
     def test_telegraph2_partition (self):
         self.do_test_telegraph_partition(2)
 
@@ -52,6 +57,33 @@ class TestCTBN (unittest.TestCase):
         logZ_exact = ctbn.ctbn_exact_log_Z(seq_mask, nbr_idx, nbr_mask, params)
         logZ_variational, theta = ctbn.ctbn_variational_log_Z(seq_mask, nbr_idx, nbr_mask, params)
         self.assertTrue (jnp.all(logZ_exact > logZ_variational))
+
+    # For a single component, the log-pseudolikelihood should be equal to the log-likelihood
+    def test_telegraph1_pseudo (self):
+        self.do_test_telegraph_pseudo ([0])
+        self.do_test_telegraph_pseudo ([1])
+
+    def do_test_telegraph_pseudo (self, xs):
+        N = 2
+        K = len(xs)
+        C, params = telegraph(K=K)
+        seq_mask, nbr_idx, nbr_mask, *_rest = ctbn.get_Markov_blankets(C)
+        xs = jnp.array(xs)
+        xidx = ctbn.seq_to_idx(xs,N)
+        q_joint = ctbn.q_joint(nbr_idx, nbr_mask, params)
+        q_eqm = ctbn.exact_eqm (q_joint)
+        ll_exact_from_eqm = jnp.log(q_eqm[xidx])
+        ll_exact = ctbn.ctbn_exact_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params)
+        ll_pseudo = ctbn.ctbn_pseudo_log_marg (xs, seq_mask, nbr_idx, nbr_mask, params)
+        self.assertTrue (jnp.isclose(ll_exact, ll_exact_from_eqm))
+        self.assertTrue (jnp.isclose(ll_exact, ll_pseudo))
+
+    # For two components that are not in contact, the log-pseudolikelihood should be equal to the log-likelihood
+    def test_telegraph2_pseudo (self):
+        self.do_test_telegraph_pseudo ([0,1])
+        self.do_test_telegraph_pseudo ([1,1])
+
+    # TIME-DEPENDENT STATISTICS (two sequences)
 
     # For a single component, the ODEs for rho and mu should equal the exact results, and F should equal the log-likelihood
     def test_telegraph1_rho_mu (self):
@@ -89,13 +121,13 @@ class TestCTBN (unittest.TestCase):
 
     # For a single component, the variational lower bound should be equal to the log-likelihood
     def test_telegraph1_variational (self):
-        C, params = telegraph(K=1)
-        seq_mask, nbr_idx, nbr_mask, *_rest = ctbn.get_Markov_blankets(C)
-        self.do_test_telegraph_variational (seq_mask, nbr_idx, nbr_mask, params, [0], [1], 1.0)
+        self.do_test_telegraph_variational ([0], [1], 1.0)
     
-    def do_test_telegraph_variational (self, seq_mask, nbr_idx, nbr_mask, params, xs, ys, T):
+    def do_test_telegraph_variational (self, xs, ys, T):
         N = 2
         K = len(xs)
+        C, params = telegraph(K=K)
+        seq_mask, nbr_idx, nbr_mask, *_rest = ctbn.get_Markov_blankets(C)
         xs = jnp.array(xs)
         ys = jnp.array(ys)
         xidx = ctbn.seq_to_idx(xs,N)
@@ -111,13 +143,10 @@ class TestCTBN (unittest.TestCase):
             self.assertTrue (self.close_over_domain(mu_exact, mu_elbo[k], T))
             self.assertTrue (self.close_over_domain(rho_exact, rho_elbo[k], T))
 
-    # For a single component, the log-pseudolikelihood should be equal to the log-likelihood
-
-    # For two components that are not in contact, F (and hence the log-pseudolikelihood) should be equal to the log-likelihood
-    # For two components that are not in contact, the partition function should be equal to its variational lower bound AND its pseudolikelihood
-
     # For two components that are in contact, F should be a reasonably close lower bound for the log-likelihood
     # For two components that are in contact, reproduce Figure 3(b)-(d) from Cohn et al (2010)
+
+    # PARAMETER FITTING
 
     # For a single component, we should be able to recover h by maximizing the log-marginal of a simulated dataset
     # For two components that are not in contact, we should be able to recover h by maximizing the log-marginal of a simulated dataset
