@@ -15,7 +15,10 @@ def offdiag_mask (N):
     return jnp.ones((N,N)) - jnp.eye(N)
 
 def safe_log (x):
-    return jnp.log (jnp.where (x == 0, smallest_float32, x))
+    return jnp.log (jnp.maximum (x, smallest_float32))
+
+def safe_recip (x):
+    return 1 / jnp.maximum (x, smallest_float32)
 
 def symmetrise (matrix):
     return (matrix + matrix.swapaxes(-1,-2)) / 2
@@ -34,6 +37,9 @@ def logsumexp (x, axis=None, keepdims=False):
     max_x = jnp.max (x, axis=axis, keepdims=True)
     return jnp.log(jnp.sum(jnp.exp(x - max_x), axis=axis, keepdims=keepdims)) + max_x
 
+def replace_nth (old_arr, n, new_nth_elt):
+    return [jax.lax.cond (k==n, lambda x:new_nth_elt, lambda x:x, old_kth_elt) for k, old_kth_elt in enumerate(old_arr)]
+    
 # Implements the algorithm from Cohn et al (2010), for protein Potts models parameterized by contact & coupling matrices
 # Cohn et al (2010), JMLR 11:93. Mean Field Variational Approximation for Continuous-Time Bayesian Networks
 
@@ -61,7 +67,7 @@ def q_k (i, x, y_i, nbr_idx, nbr_mask, params):
     S = params['S']
     J = params['J']
     h = params['h']
-    return S[x[i],y_i] * jnp.exp (-h[y_i] - 2*jnp.dot (nbr_mask[i], J[y_i,x[nbr_idx[i]]]))
+    return S[x[i],y_i] * jnp.exp (h[y_i] + 2*jnp.dot (nbr_mask[i], J[y_i,x[nbr_idx[i]]]))
 
 # Endpoint-conditioned variational approximation:
 #  mu = (K,N) matrix of mean-field probabilities
@@ -75,8 +81,10 @@ def q_bar (idx, nbr_idx, nbr_mask, params, mu):
     J = params['J']
     h = params['h']
     exp_2J = jnp.exp (2 * J)  # (y_i,x_k)
-    exp_2JC = exp_2J[None,None,:,:] ** nbr_mask[idx,:,None,None]  # (a,k,y_i,x_{nbr_k})
-    mu_exp_2JC = jnp.einsum ('akx,kyx->aky', mu[nbr_idx[idx]], exp_2JC)  # (a,k,y_i)
+    exp_2JC = exp_2J[None,None,:,:]  # (a,k,y_i,x_{nbr_k})
+    mu_nbr = mu[nbr_idx[idx]]  # (a,k,x_{nbr_k})
+    mu_exp_2JC = jnp.einsum ('akx,akyx->aky', mu_nbr, exp_2JC) ** nbr_mask[idx][:,:,None]  # (a,k,y_i)
+#    jax.debug.print("exp_2JC={exp_2JC} mu_nbr={mu_nbr} mu_exp_2JC={mu_exp_2JC} nbr_mask[idx]={nm}",mu_exp_2JC=mu_exp_2JC,exp_2JC=exp_2JC,mu_nbr=mu_nbr,nm=nbr_mask[idx])
     S = S * offdiag_mask(N)
     return S[None,:,:] * jnp.exp(h)[None,None,:] * product(mu_exp_2JC,axis=-2,keepdims=True)  # (a,x_i,y_i)
 
@@ -92,7 +100,8 @@ def q_bar_cond (i, nbr_idx, nbr_mask, params, mu):
     cond_energy = nbr_mask[i,:,None,None] * J[None,:,:]  # (j,x_{nbr_j},y_i)
     exp_2J = jnp.exp (2 * J)  # (N,N)
     exp_2JC = exp_2J[None,None,:,:] ** nonself_nbr_mask[:,:,None,None]  # (j,k,y_i,x_{nbr_k})
-    mu_exp_JC = jnp.einsum ('kx,jkyx->jky', mu[nbr_idx[i]], exp_2JC)  # (j,k,y_i)
+    mu_nbr = mu[nbr_idx[i]] ** nbr_mask[i,:]  # (k,x_{nbr_k})
+    mu_exp_JC = jnp.einsum ('kx,jkyx->jky', mu_nbr, exp_2JC)  # (j,k,y_i)
     S = S * offdiag_mask(N)
     return S[None,None,:,:] * jnp.exp(h)[None,None,None,:] * jnp.exp(-2*cond_energy)[:,:,None,:] * product(mu_exp_JC,axis=-2)[:,None,None,:]  # (j,x_{nbr_j},x_i,y_i)
 
@@ -125,11 +134,14 @@ def q_tilde_cond (i, nbr_idx, nbr_mask, params, mu):
 # Rate matrix for a single component, q_{xy} = S_{xy}
 # S: (N,N)
 # h: (N,)
-def q_single (params):
+def q_single_offdiag (params):
     S = params['S']
     h = params['h']
     N = S.shape[0]
     return S * offdiag_mask(N) * jnp.exp(h)[None,:]
+
+def q_single (params):
+    return row_normalise (q_single_offdiag (params))
 
 # Amalgamated (joint) rate matrix for all components
 # Note this is big: (N^K,N^K)
@@ -157,7 +169,9 @@ def all_seqs (N, K):
 
 # Returns (A,N,N) matrix where entry (k,x_{idx[a]},y_{idx[a]}) is the joint probability of transition x_{idx[a]}->y_{idx[a]} for component idx[a]
 def gamma (idx, nbr_idx, nbr_mask, params, mu, rho):
-    return jnp.einsum ('ax,axy,ay,ay->axy', mu[idx], q_tilde(idx,nbr_idx,nbr_mask,params,mu), rho[idx], 1/mu[idx])
+    g = jnp.einsum ('ax,axy,ay,ax->axy', mu[idx], q_tilde(idx,nbr_idx,nbr_mask,params,mu), rho[idx], safe_recip(rho[idx]))
+#    jax.debug.print('mu[idx]={mu} qtilde={qt} rho[idx]={rho} g={g}',mu=mu[idx],rho=rho[idx],qt=q_tilde(idx,nbr_idx,nbr_mask,params,mu),g=g)
+    return g
 
 # Returns (N,) vector
 def psi (i, nbr_idx, nbr_mask, params, mu, rho):
@@ -165,21 +179,23 @@ def psi (i, nbr_idx, nbr_mask, params, mu, rho):
     qbar_cond = q_bar_cond(i,nbr_idx,nbr_mask,params,mu)  # (M,N,N,N)
     qtilde_cond = q_tilde_cond(i,nbr_idx,nbr_mask,params,mu)  # (M,N,N,N)
     log_qtilde_cond = -safe_log (jnp.where (qtilde_cond < 0, 1, qtilde_cond))  # (M,N,N,N)
-    return jnp.einsum('jy,jxyz,j->x',mu[nbr_idx[i]],qbar_cond,nbr_mask[i]) + jnp.einsum('jxy,jxyz,j->x',gammas,log_qtilde_cond,nbr_mask[i])
+#    jax.debug.print ("gammas={g} mu[nbr_idx[i]]={mu} qbar_cond={qb} qtilde_cond={qt} log_qtilde_cond={lq}", g=gammas, mu=mu[nbr_idx[i]], qb=qbar_cond, qt=qtilde_cond, lq=log_qtilde_cond)
+    return -jnp.einsum('jy,jxyz,j->x',mu[nbr_idx[i]],qbar_cond,nbr_mask[i]) + jnp.einsum('jxy,jxyz,j->x',gammas,log_qtilde_cond,nbr_mask[i])
 
 def rho_deriv (i, nbr_idx, nbr_mask, params, mu, rho):
     K = mu.shape[0]
     qbar = q_bar(jnp.array([i]), nbr_idx, nbr_mask, params, mu)[0,:,:]  # (N,N)
-    qbar_diag = jnp.einsum ('xy->x', qbar)  # (N,)
+    qbar_diag = -jnp.einsum ('xy->x', qbar)  # (N,)
     _psi = psi(i, nbr_idx, nbr_mask, params, mu, rho)  # (N,)
     qtilde = q_tilde(jnp.array([i]), nbr_idx, nbr_mask, params, mu)  # (1,N,N)
     rho_deriv_i = -rho[i,:] * (qbar_diag + _psi) - jnp.einsum ('y,xy->x', rho[i,:], qtilde[0,:,:])  # (N,)
+#    jax.debug.print ("qbar={qb} qbar_diag={qd} qtilde={qt} psi={psi} rho_deriv={deriv}", qb=qbar, qd=qbar_diag, qt=qtilde, psi=_psi, deriv=rho_deriv_i)
     return rho_deriv_i
 
 def mu_deriv (i, nbr_idx, nbr_mask, params, mu, rho):
     K = mu.shape[0]
     _gamma = gamma(jnp.array([i]), nbr_idx, nbr_mask, params, mu, rho)[0,:,:]  # (N,N)
-    mu_deriv_i = jnp.einsum('yx->x',_gamma) - jnp.einsum('xy->y',_gamma)  # (N,)
+    mu_deriv_i = jnp.einsum('yx->x',_gamma) - jnp.einsum('xy->x',_gamma)  # (N,)
     return mu_deriv_i
 
 def F_deriv (seq_mask, nbr_idx, nbr_mask, params, mu, rho):
@@ -192,6 +208,7 @@ def F_deriv (seq_mask, nbr_idx, nbr_mask, params, mu, rho):
     log_qtilde = safe_log(jnp.where(mask,qtilde,1))
     gamma_coeff = log_qtilde + 1 + safe_log(mu)[:,:,None] - safe_log(_gamma)
     dF = -jnp.einsum('ix,ixy,ixy->',mu,qbar,mask) + jnp.einsum('ixy,ixy,ixy->',_gamma,gamma_coeff,mask)
+#    jax.debug.print("mu={mu} rho={rho} dF={dF} qbar={qbar} gamma={gamma} gamma_coeff={gamma_coeff}", mu=mu, rho=rho, dF=dF, qbar=qbar, gamma=_gamma, gamma_coeff=gamma_coeff)
     return dF
 
 # Exact posterior for a complete rate matrix
@@ -217,6 +234,18 @@ class ExactMu (ExactRho):
         mu = exp_qt * rho / self.exp_qT
         return mu
 
+# Dummy class that returns fixed solution for mu and/or rho
+class FixedSolution():
+    def __init__ (self, val):
+        self.val = val
+    
+    def evaluate (self, t):
+        return self.val
+
+class ZeroSolution(FixedSolution):
+    def __init__ (self, N):
+        super().__init__ (jnp.zeros(N))
+
 # helper to evaluate mu and rho from arrays of Solution-like objects
 def eval_mu_rho (mu_solns, rho_solns, t):
     mu = jnp.stack ([mu_soln.evaluate(t) for mu_soln in mu_solns])
@@ -225,22 +254,26 @@ def eval_mu_rho (mu_solns, rho_solns, t):
 
 # wrappers for diffrax
 def F_term (t, F_t, args):
-    seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns = args
+    seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T = args
     mu, rho = eval_mu_rho (mu_solns, rho_solns, t)
+    mu = jnp.where (t < T, mu, rho)  # guard against explosion at boundary
+#    jax.debug.print ("t={t} mu={mu} rho={rho} dF={deriv}", t=t, mu=mu, rho=rho, deriv=F_deriv (seq_mask, nbr_idx, nbr_mask, params, mu, rho))
     return F_deriv (seq_mask, nbr_idx, nbr_mask, params, mu, rho)
 
 def solve_F (seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T, rtol=1e-3, atol=1e-6):
     term = diffrax.ODETerm (F_term)
     solver = diffrax.Dopri5()
     controller = diffrax.PIDController (rtol=rtol, atol=atol)
-    return diffrax.diffeqsolve (terms=term, solver=solver, t0=0, t1=T, dt0=None, y0=0,
-                                args=(seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns),
-                                stepsize_controller = controller)
+    F_soln = diffrax.diffeqsolve (terms=term, solver=solver, t0=0, t1=T, dt0=None, y0=0,
+                                  args=(seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T),
+                                  stepsize_controller = controller)
+    return F_soln.ys[-1]
 
 def rho_term (t, rho_i_t, args):
     (i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns) = args
     mu, rho = eval_mu_rho (mu_solns, rho_solns, t)
     rho = rho.at[i].set(rho_i_t)
+#    jax.debug.print ("t={t} mu={mu} rho={rho} deriv={deriv}", t=t, mu=mu, rho=rho, deriv=rho_deriv (i, nbr_idx, nbr_mask, params, mu, rho))
     return seq_mask[i] * rho_deriv (i, nbr_idx, nbr_mask, params, mu, rho)
 
 def solve_rho (i, rho_i_T, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T, rtol=1e-3, atol=1e-6):
@@ -253,9 +286,12 @@ def solve_rho (i, rho_i_T, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_so
                                 saveat = diffrax.SaveAt(dense=True))
 
 def mu_term (t, mu_i_t, args):
-    i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns = args
+    i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T = args
     mu, rho = eval_mu_rho (mu_solns, rho_solns, t)
+    rho_i_t = rho[i,:]
+    mu_i_t = jnp.where (t < T, mu_i_t, rho_i_t)  # guard against explosion at boundary
     mu = mu.at[i].set(mu_i_t)
+#    jax.debug.print ("t={t} mu={mu} rho={rho} gamma={g} deriv={deriv}", t=t, mu=mu, rho=rho, deriv=mu_deriv (i, nbr_idx, nbr_mask, params, mu, rho), g=gamma(jnp.array([i]), nbr_idx, nbr_mask, params, mu, rho)[0,:,:])
     return seq_mask[i] * mu_deriv (i, nbr_idx, nbr_mask, params, mu, rho)
 
 def solve_mu (i, mu_i_0, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T, rtol=1e-3, atol=1e-6):
@@ -263,7 +299,7 @@ def solve_mu (i, mu_i_0, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_soln
     solver = diffrax.Dopri5()
     controller = diffrax.PIDController (rtol=rtol, atol=atol)
     return diffrax.diffeqsolve (terms=term, solver=solver, t0=0, t1=T, dt0=None, y0=mu_i_0,
-                                args=(i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns),
+                                args=(i, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T),
                                 stepsize_controller = controller,
                                 saveat = diffrax.SaveAt(dense=True))
 
@@ -273,33 +309,37 @@ def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, m
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
-    # initialize component-indexed arrays of mu, rho solutions, using single-component posteriors
-    q1 = q_single (params)
-    init_rho_solns = [ExactRho (q1, T, xs[i], ys[i]) for i in range(K)]
-    init_mu_solns = [ExactMu (q1, T, xs[i], ys[i]) for i in range(K)]
     # create arrays of boundary conditions for mu(0) and rho(T)
     mu_0 = jnp.eye(N)[xs]
     rho_T = jnp.eye(N)[ys]
+    # create dummy mu, rho solutions
+#    q1 = q_single_offdiag (params)
+#    init_rho_solns = [ExactRho (q1, T, xs[i], ys[i]) for i in range(K)]
+#    init_mu_solns = [ExactMu (q1, T, xs[i], ys[i]) for i in range(K)]
+    init_mu_solns = [FixedSolution(mu_0_k) for mu_0_k in mu_0]
+    init_rho_solns = [FixedSolution(rho_T_k) for rho_T_k in rho_T]
     # do one update so (rho_solns,mu_solns) are diffrax AbstractPath's, to keep types uniform inside while loop
     rho_solns = [solve_rho (i, rho_T[i,:], seq_mask, nbr_idx, nbr_mask, params, init_mu_solns, init_rho_solns, T) for i in range(K)]
-    mu_solns = [solve_mu (i, mu_0[i,:], seq_mask, nbr_idx, nbr_mask, params, init_mu_solns, init_rho_solns, T) for i in range(K)]
+    mu_solns = [solve_mu (i, mu_0[i,:], seq_mask, nbr_idx, nbr_mask, params, init_mu_solns, rho_solns, T) for i in range(K)]
     # while (F_current - F_prev)/F_prev > minimum relative increase:
     #  for component indices i:
     #   solve rho and then mu for component i, using diffrax, and replace single-component posteriors with diffrax Solution's
     #   F_prev <- F_current, F_current <- new variational bound
     def score_fun (state):
-        rho_solns, mu_solns = state
-        return solve_F (seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
+        mu_solns, rho_solns = state
+        F = solve_F (seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
+#        jax.debug.print("F={F}",F=F)
+        return F
     def update_fun (state):
         return jax.lax.fori_loop (0, N, loop_body_fun, state)
     def loop_body_fun (i, args):
-        rho_solns, mu_solns = args
+        mu_solns, rho_solns = args
         new_rho_i = solve_rho (i, rho_T[i,:], seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
-        rho_solns = [new_rho_i if k==i else old_rho_i for k, old_rho_i in enumerate(rho_solns)]
+        rho_solns = replace_nth (rho_solns, i, new_rho_i)
         new_mu_i = solve_mu (i, mu_0[i,:], seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
-        mu_solns = [new_mu_i if k==i else old_mu_i for k, old_mu_i in enumerate(mu_solns)]
-        return rho_solns, mu_solns
-    return bounded_optimize(score_fun, update_fun, (rho_solns, mu_solns), max_updates, min_inc=min_inc)
+        mu_solns = replace_nth (mu_solns, i, new_mu_i)
+        return mu_solns, rho_solns
+    return bounded_optimize(score_fun, update_fun, (mu_solns, rho_solns), max_updates, min_inc=min_inc)
 
 # Given sequences xs,ys and contact matrix C, return padded xs,ys along with seq_mask,nbr_idx,nbr_mask
 def get_Markov_blankets (C, xs=None, ys=None, K=None, M=None):

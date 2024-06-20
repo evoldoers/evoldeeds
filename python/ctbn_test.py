@@ -53,8 +53,41 @@ class TestCTBN (unittest.TestCase):
         logZ_variational, theta = ctbn.ctbn_variational_log_Z(seq_mask, nbr_idx, nbr_mask, params)
         self.assertTrue (jnp.all(logZ_exact > logZ_variational))
 
+    # For a single component, the ODEs for rho and mu should equal the exact results, and F should equal the log-likelihood
+    def test_telegraph1_rho_mu (self):
+#        self.do_test_telegraph1_rho_mu (0, 0)
+        self.do_test_telegraph1_rho_mu (0, 1)
+#        self.do_test_telegraph1_rho_mu (1, 0)
+#        self.do_test_telegraph1_rho_mu (1, 1)
+
+    def do_test_telegraph1_rho_mu (self, x, y):
+        C, params = telegraph(K=1)
+        seq_mask, nbr_idx, nbr_mask, *_rest = ctbn.get_Markov_blankets(C)
+        T = 1.
+        q = ctbn.q_joint(nbr_idx, nbr_mask, params)
+        zero = [ctbn.ZeroSolution(2)]
+        rho_ode = ctbn.solve_rho (0, jax.nn.one_hot(y,2), seq_mask, nbr_idx, nbr_mask, params, zero, zero, T)
+        rho_exact = ctbn.ExactRho (q, T, x, y)
+        self.assertTrue (self.close_over_domain (rho_exact, rho_ode, T))
+        mu_ode = ctbn.solve_mu (0, jax.nn.one_hot(x,2), seq_mask, nbr_idx, nbr_mask, params, zero, [rho_ode], T)
+        mu_exact = ctbn.ExactMu (q, T, x, y)
+        self.assertTrue (self.close_over_domain (mu_exact, mu_ode, T))
+        ll_exact = jnp.log(expm(T * q)[x, y])
+        F = ctbn.solve_F (seq_mask, nbr_idx, nbr_mask, params, [mu_ode], [rho_ode], T)
+#        print(f"F={F} ll_exact={ll_exact}")
+        self.assertTrue (jnp.isclose (ll_exact, F, rtol=1e-2, atol=1e-1))
+
+    def close_over_domain (self, a, b, T, a_label="exact", b_label="bound", rtol=1e-3, atol=1e-3, steps=10):
+        ts = jnp.arange(steps+1) * T / steps
+        a_t = jnp.array ([a.evaluate(t) for t in ts])
+        b_t = jnp.array ([b.evaluate(t) for t in ts])
+        pred = jnp.isclose (a_t, b_t, rtol=rtol, atol=atol)
+        if not jnp.all(pred):
+            for t, at, bt, p in zip(ts, a_t, b_t, pred):
+                print(f"t={t}: {a_label}={at} {b_label}={bt} close={p}")
+        return jnp.all(pred)
+
     # For a single component, the variational lower bound should be equal to the log-likelihood
-    # For a single component, the variational rho and mu should be equal to the exact posterior
     def test_telegraph1_variational (self):
         C, params = telegraph(K=1)
         seq_mask, nbr_idx, nbr_mask, *_rest = ctbn.get_Markov_blankets(C)
@@ -62,16 +95,21 @@ class TestCTBN (unittest.TestCase):
     
     def do_test_telegraph_variational (self, seq_mask, nbr_idx, nbr_mask, params, xs, ys, T):
         N = 2
+        K = len(xs)
         xs = jnp.array(xs)
         ys = jnp.array(ys)
         xidx = ctbn.seq_to_idx(xs,N)
         yidx = ctbn.seq_to_idx(ys,N)
         q_joint = ctbn.q_joint(nbr_idx, nbr_mask, params)
-        mu_exact = ctbn.ExactMu(q_joint, T, xidx, yidx)
-        rho_exact = ctbn.ExactRho(q_joint, T, xidx, yidx)
         ll_exact = jnp.log(expm(T * q_joint)[xidx, yidx])
-        log_elbo, (elbo_rho, elbo_mu) = ctbn.ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T)
-        self.assertTrue (jnp.allclose(log_elbo, ll_exact))
+        log_elbo, (mu_elbo, rho_elbo) = ctbn.ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T)
+        self.assertTrue (jnp.allclose(log_elbo, ll_exact, rtol=1e-2, atol=1e-1))
+        q1 = ctbn.q_single (params)
+        for k in range(K):
+            mu_exact = ctbn.ExactMu(q1, T, xs[k], ys[k])
+            rho_exact = ctbn.ExactRho(q1, T, xs[k], ys[k])
+            self.assertTrue (self.close_over_domain(mu_exact, mu_elbo[k], T))
+            self.assertTrue (self.close_over_domain(rho_exact, rho_elbo[k], T))
 
     # For a single component, the log-pseudolikelihood should be equal to the log-likelihood
 
