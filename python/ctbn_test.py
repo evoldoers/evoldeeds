@@ -48,9 +48,9 @@ class TestCTBN (unittest.TestCase):
         logZ_variational, theta = ctbn.ctbn_variational_log_Z(seq_mask, nbr_idx, nbr_mask, params)
         self.assertTrue (jnp.all(logZ_exact > logZ_variational))
 
-    # For a single component, the partition function should be equal to its variational lower bound AND its pseudolikelihood
     # For a single component, rho and mu should be equal to the exact posterior
     # For a single component, the F term should be equal to the log-likelihood
+    # For a single component, the log-likelihood should be equal to its variational lower bound
     # For a single component, the log-pseudolikelihood should be equal to the log-likelihood
 
     # For two components that are not in contact, F (and hence the log-pseudolikelihood) should be equal to the log-likelihood
