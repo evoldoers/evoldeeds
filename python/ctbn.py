@@ -53,7 +53,6 @@ def replace_nth (old_arr, n, new_nth_elt):
 #  K = # of components, each having N states (the sequence length)
 #  C = symmetric binary contact matrix (K*K). For i!=j, C_ij=C_ji=1 if i and j are in contact, 0 otherwise. C_ii=0
 
-
 # Since C is a sparse matrix, with each component having at most M<<K neighbors, we represent it compactly as follows:
 #  nbr_idx = sparse neighbor matrix (M*L). nbr_idx[i,n] is the index of the n-th neighbor of component i
 #  nbr_mask = sparse neighbor flag matrix (M*L). nbr_mask[i,n] is 1 if nbr_idx[i,n] is a real neighbor, 0 otherwise
