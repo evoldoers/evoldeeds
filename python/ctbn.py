@@ -330,12 +330,10 @@ def ctbn_variational_log_cond (prng, xs, ys, seq_mask, nbr_idx, nbr_mask, params
     # create arrays of boundary conditions for mu(0) and rho(T)
     mu_0 = jnp.eye(N)[xs]
     rho_T = jnp.eye(N)[ys]
-    # create dummy mu, rho solutions
+    # create initial mu, rho solutions by assuming no interactions
     q1 = q_single (params)
     init_rho_solns = [ExactRho (q1, T, xs[i], ys[i]) for i in range(K)]
     init_mu_solns = [ExactMu (q1, T, xs[i], ys[i]) for i in range(K)]
-#    init_mu_solns = [FixedSolution(mu_0_k) for mu_0_k in mu_0]
-#    init_rho_solns = [FixedSolution(rho_T_k) for rho_T_k in rho_T]
     # do one update so (rho_solns,mu_solns) are diffrax AbstractPath's, to keep types uniform inside while loop
     rho_solns = [solve_rho (i, rho_T[i,:], seq_mask, nbr_idx, nbr_mask, params, init_mu_solns, init_rho_solns, T) for i in range(K)]
     mu_solns = [solve_mu (i, mu_0[i,:], seq_mask, nbr_idx, nbr_mask, params, init_mu_solns, rho_solns, T) for i in range(K)]
