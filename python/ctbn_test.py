@@ -134,7 +134,8 @@ class TestCTBN (unittest.TestCase):
         yidx = ctbn.seq_to_idx(ys,N)
         q_joint = ctbn.q_joint(nbr_idx, nbr_mask, params)
         ll_exact = jnp.log(expm(T * q_joint)[xidx, yidx])
-        log_elbo, (mu_elbo, rho_elbo) = ctbn.ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T)
+        prng = jax.random.PRNGKey(42)
+        log_elbo, (mu_elbo, rho_elbo) = ctbn.ctbn_variational_log_cond (prng, xs, ys, seq_mask, nbr_idx, nbr_mask, params, T)
         self.assertTrue (jnp.allclose(log_elbo, ll_exact, rtol=1e-2, atol=1e-1))
         q1 = ctbn.q_single (params)
         for k in range(K):
@@ -160,7 +161,8 @@ class TestCTBN (unittest.TestCase):
         yidx = ctbn.seq_to_idx(ys,2)
         q_joint = ctbn.q_joint(nbr_idx, nbr_mask, params)
         ll_exact = jnp.log(expm(T * q_joint)[xidx, yidx])
-        log_elbo, (mu_elbo, rho_elbo) = ctbn.ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-6)
+        prng = jax.random.PRNGKey(42)
+        log_elbo, (mu_elbo, rho_elbo) = ctbn.ctbn_variational_log_cond (prng, xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-6)
         self.assertTrue (ll_exact > log_elbo)
         dt_steps = 100
         ts = jnp.linspace(0,T,dt_steps+1)

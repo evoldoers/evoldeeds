@@ -323,7 +323,7 @@ def solve_mu (i, mu_i_0, seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_soln
 
 # Calculate the variational likelihood for an endpoint-conditioned continuous-time Bayesian network
 # This is a strict lower bound for log P(X_T=ys|X_0=xs,T,params)
-def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-3, max_updates=4096):
+def ctbn_variational_log_cond (prng, xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, min_inc=1e-3, max_updates=4096):
     K = nbr_idx.shape[0]
     N = params['S'].shape[0]
     params = normalise_ctbn_params (params)
@@ -340,23 +340,30 @@ def ctbn_variational_log_cond (xs, ys, seq_mask, nbr_idx, nbr_mask, params, T, m
     rho_solns = [solve_rho (i, rho_T[i,:], seq_mask, nbr_idx, nbr_mask, params, init_mu_solns, init_rho_solns, T) for i in range(K)]
     mu_solns = [solve_mu (i, mu_0[i,:], seq_mask, nbr_idx, nbr_mask, params, init_mu_solns, rho_solns, T) for i in range(K)]
     # while (F_current - F_prev)/F_prev > minimum relative increase:
-    #  for component indices i:
+    #  for component indices i, in (nonrepeating) random order:
     #   solve rho and then mu for component i, using diffrax, and replace single-component posteriors with diffrax Solution's
     #   F_prev <- F_current, F_current <- new variational bound
-    def score_fun (state):
-        mu_solns, rho_solns = state
+    # To avoid repetition, we have to propagate the last index visited through the outer while loop
+    def score_fun (outer_state):
+        mu_solns, rho_solns = outer_state[0]
         F = solve_F (seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
         return F
-    def update_fun (state):
-        return jax.lax.fori_loop (0, N, loop_body_fun, state)
-    def loop_body_fun (i, args):
-        mu_solns, rho_solns = args
+    def update_fun (outer_state):
+        inner_state, last_i = outer_state
+        order = jax.random.permutation (prng, K)
+        order = jax.lax.cond (last_i == order[0], lambda x:order[::-1], lambda x:order, None)  # avoid repetition
+#        jax.debug.print("order={order}",order=order)
+        inner_state, _ = jax.lax.scan (loop_body_fun, inner_state, order)
+        return inner_state, order[-1]
+    def loop_body_fun (inner_state, i):
+        mu_solns, rho_solns = inner_state
         new_rho_i = solve_rho (i, rho_T[i,:], seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
         rho_solns = replace_nth (rho_solns, i, new_rho_i)
         new_mu_i = solve_mu (i, mu_0[i,:], seq_mask, nbr_idx, nbr_mask, params, mu_solns, rho_solns, T)
         mu_solns = replace_nth (mu_solns, i, new_mu_i)
-        return mu_solns, rho_solns
-    return bounded_optimize(score_fun, update_fun, (mu_solns, rho_solns), max_updates, min_inc=min_inc)
+        return (mu_solns, rho_solns), None
+    log_elbo, (mu_rho, _last_i)  = bounded_optimize(score_fun, update_fun, ((mu_solns, rho_solns), -1), max_updates, min_inc=min_inc)
+    return log_elbo, mu_rho
 
 # Given sequences xs,ys and contact matrix C, return padded xs,ys along with seq_mask,nbr_idx,nbr_mask
 def get_Markov_blankets (C, xs=None, ys=None, K=None, M=None):
