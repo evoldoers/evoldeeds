@@ -62,60 +62,71 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
     # This will be stored as F(i,j,k) = Fsparse[1+i-xbegin[j],j,k]
     K = 3  # Fsparse will have shape (W,Ly+1,K)
 
-    def scan_fn (carry, jInfo):
-        Fprev, xbegin_prev, j_prev = carry
-        yTok, xbegin_j, xend_j = jInfo
-        j = j_prev + 1
-        # Line up Fprev_ins so its incoming insert states are aligned with ours,
-        # and Fprev_mat so its incoming match states are aligned with ours
-        xshift = xbegin_j - xbegin_prev
-        Fprev_ins = jax.lax.dynamic_slice_in_dim(Fprev, xshift, W - xshift, axis=0)
-        Fprev_ins = jnp.pad(Fprev_ins, ((0, xshift), (0, 0)))  # (W,K)
-        Fprev_mat = jnp.roll(Fprev_ins, 1, axis=0)  # (W,K)
-        # Similarly, line up ex
-        ex_j = jax.lax.dynamic_slice_in_dim(ex[:,yTok], xbegin_j, W, axis=0)  # (W,)
-        # Calculate incoming match and insert
-        Fm = jnp.einsum ('i,ik,k->i', ex_j, Fprev_mat, t2m)  # (W,)
-        Fi = jnp.einsum ('ik,k->i', Fprev_ins, t2i)  # (W,)
-        # Here we want the jax in-place array modification equivalent of
-        # if xbegin_j == 0 and j == 1 then Fi[0] = t[S,I]
-        # if xbegin_j <= 1 and j == 1 then Fm[1-xbegin_j] = t[S,M] * ex[0,yTok]
-        Fi = jax.lax.cond(
-                (xbegin_j == 0) & (j == 1),
-                lambda Fi: Fi.at[0].set(t[S, I]),
-                lambda Fi: Fi,
-                Fi
-            )
-        Fm = jax.lax.cond(
-                (xbegin_j <= 1) & (j == 1),
-                lambda Fm: Fm.at[1 - xbegin_j].set(t[S, M] * ex[0, yTok]),
-                lambda Fm: Fm,
-                Fm
-            )        
-        # The recurrence for the Fd states is Fd[i] = Fm[i-1] * tm2d + Fi[i-1] * ti2d + Fd[i-1] * td2d
-        # We will calculate this as a matrix product:
-        # Fd_mx[i] = (Fd[i] 1), with Fd_mx[0] = (0 1), and Fd_mx[i+1] = Fd_mx[i] D[i]
-        # D[i] = (td2d     0)
-        #        (Fmi2d[i] 1)
-        # where Fmi2d[i] = Fm[i] * tm2d + Fi[i] * ti2d
-        # Hence Fd[i] = (prod_{j=0}^{i-1} D[j])[1,0]  for i>0
-        Fmi2d = Fm * tm2d + Fi * ti2d  # (W,)
-        top_row = jnp.stack([jnp.full_like(Fmi2d, td2d), jnp.zeros_like(Fmi2d)], axis=-1)
-        bottom_row = jnp.stack([Fmi2d, jnp.ones_like(Fmi2d)], axis=-1)
-        D_mx = jnp.stack([top_row, bottom_row], axis=1)  # (W,2,2)
-        D_mx_prod = jax.lax.associative_scan (jnp.matmul, D_mx)  # (W,2,K)
-        Fd = jnp.pad (D_mx_prod[:-1,1,0], (1,0))  # (W,)
-        # Combine match, insert, and delete
-        F = jnp.stack([Fm, Fi, Fd], axis=-1)  # (W,3)
-        # Return carry for next iteration, and F as output
-        return (F, xbegin_j, j), F
+    def make_scan_fn (j_is_one):
+        def scan_fn (carry, jInfo):
+            Fprev, xbegin_prev = carry
+            yTok, xbegin_j = jInfo
+            # Line up Fprev_ins so its incoming insert states are aligned with ours,
+            # and Fprev_mat so its incoming match states are aligned with ours
+            xshift = xbegin_j - xbegin_prev
+            Fprev_ins = jax.lax.dynamic_slice_in_dim(Fprev, xshift, W - xshift, axis=0)
+            Fprev_ins = jnp.pad(Fprev_ins, ((0, xshift), (0, 0)))  # (W,K)
+            Fprev_mat = jnp.roll(Fprev_ins, 1, axis=0)  # (W,K)
+            # Similarly, line up ex
+            ex_j = jax.lax.dynamic_slice_in_dim(ex[:,yTok], xbegin_j, W, axis=0)  # (W,)
+            # Calculate incoming match and insert
+            Fm = jnp.einsum ('i,ik,k->i', ex_j, Fprev_mat, t2m)  # (W,)
+            Fi = jnp.einsum ('ik,k->i', Fprev_ins, t2i)  # (W,)
+            # Here we want the jax in-place array modification equivalent of
+            # if xbegin_j == 0 and j == 1 then Fi[0] = t[S,I]
+            # if xbegin_j <= 1 and j == 1 then Fm[1-xbegin_j] = t[S,M] * ex[0,yTok]
+            if j_is_one:
+                Fi = jax.lax.cond(
+                        xbegin_j == 0,
+                        lambda Fi: Fi.at[0].set(t[S, I]),
+                        lambda Fi: Fi,
+                        Fi
+                    )
+                Fm = jax.lax.cond(
+                        xbegin_j <= 1,
+                        lambda Fm: Fm.at[1 - xbegin_j].set(t[S, M] * ex[0, yTok]),
+                        lambda Fm: Fm,
+                        Fm
+                    )        
+            # The recurrence for the Fd states is
+            #  Fd[i] = Fm[i-1] * tm2d + Fi[i-1] * ti2d + Fd[i-1] * td2d  for i>0, Fd[0] = 0
+            # We will calculate this as a matrix product:
+            # Fd_vec[i] = (Fd[i] 1), with Fd_vec[0] = (0 1), and Fd_vec[i+1] = Fd_vec[i] Fd_mx[i] with
+            # Fd_mx[i] = (td2d     0)
+            #            (Fmi2d[i] 1)
+            #  where Fmi2d[i] = Fm[i] * tm2d + Fi[i] * ti2d
+            # Hence Fd[i] = (prod_{j=0}^{i-1} Fd_mx[j])[1,0]  for i>0
+            # We can represent any partial matrix product by the first column (a,b) (the second column of the product is always (0,1))
+            #  then (a1,b1) * (a2,b2) = (a1 0) (a2 0) = (a1*a2    0) = (a1*a2,b1*a2+b2)
+            #                           (b1 1) (b2 1)   (b1*a2+b2 1)
+            # Component b then contains our final product
+            #   Fd[i] = ( prod_{j=0}^{i-1} (td2d,Fmi2d[i]) )[1]
+            def Fd_mx_mul (f1,  # (2,)
+                           f2):  # (2,)
+                x1, y1 = f1[0], f1[1]
+                x2, y2 = f2[0], f2[1]
+                return jnp.array([x1*x2, y1*x2+y2])  # (2,)
+
+            Fmi2d = Fm * tm2d + Fi * ti2d  # (W,)
+            Fd_mx = jnp.stack([td2d * jnp.ones_like(Fmi2d), Fmi2d], axis=-1)  # (W,2)
+            Fd_mx_prod = jax.lax.associative_scan (Fd_mx_mul, Fd_mx)  # (W,2)
+            Fd = jnp.pad(Fd_mx_prod[:-1,1],(1,0)) # (W,)  # Fd[0] = 0, Fd[1] = Fmi2d[0], Fd[1:] = Fd_mx_prod[:-1,1]
+            # Combine match, insert, and delete
+            F = jnp.stack([Fm, Fi, Fd], axis=-1)  # (W,3)
+            # Return carry for next iteration, and F as output
+            return (F, xbegin_j), F
     
     # First row of F just has transitions from start->delete->delete....
     Fd0 = jnp.pad(jnp.pow (t[D,D], jnp.arange(xend[0])) * t[S,D], (1,W-xend[0]-1))  # (W,)
     F0 = jnp.stack([jnp.zeros_like(Fd0), jnp.zeros_like(Fd0), Fd0], axis=-1)  # (W,3)
 
     # Now scan over yobs
-    _, F = jax.lax.scan (scan_fn, (F0, xbegin[0], 0), (yobs, xbegin[1:], xend[1:]), length=Ly)
+    _, F = jax.lax.scan (scan_fn, (F0, xbegin[0], 0), (yobs, xbegin[1:]), length=Ly)
 
     Fsparse = jnp.stack([F0, F], axis=0)  # (Ly+1,W,3)
     return Fsparse
