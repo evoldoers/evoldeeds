@@ -28,6 +28,7 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
     assert yobs.ndim == 1
     Lx = xobs.size
     Ly = yobs.size
+    assert Ly > 0
 
     assert jnp.all(xobs < A)
     assert jnp.all(xobs >= 0)
@@ -62,8 +63,10 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
     # This will be stored as F(i,j,k) = Fsparse[1+i-xbegin[j],j,k]
     K = 3  # Fsparse will have shape (W,Ly+1,K)
 
-    def make_scan_fn (j_is_one):
-        def scan_fn (carry, jInfo):
+    # a function created by make_scan_fn has the same type signature as scan_fn
+    def make_scan_fn (j_is_one: bool) -> Callable[[Tuple[ArrayLike, int], Tuple[int, int]], Tuple[Tuple[ArrayLike, int], ArrayLike]]:
+        def scan_fn (carry: Tuple[ArrayLike, int],  # (Fprev, xbegin_prev)
+                     jInfo: Tuple[int, int]) -> Tuple[Tuple[ArrayLike, int], ArrayLike]:  # (F, xbegin_j), F
             Fprev, xbegin_prev = carry
             yTok, xbegin_j = jInfo
             # Line up Fprev_ins so its incoming insert states are aligned with ours,
@@ -106,8 +109,8 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
             #                           (b1 1) (b2 1)   (b1*a2+b2 1)
             # Component b then contains our final product
             #   Fd[i] = ( prod_{j=0}^{i-1} (td2d,Fmi2d[i]) )[1]
-            def Fd_mx_mul (f1,  # (2,)
-                           f2):  # (2,)
+            def Fd_mx_mul (f1: ArrayLike,  # (2,)
+                           f2: ArrayLike):  # (2,)
                 x1, y1 = f1[0], f1[1]
                 x2, y2 = f2[0], f2[1]
                 return jnp.array([x1*x2, y1*x2+y2])  # (2,)
@@ -120,15 +123,30 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
             F = jnp.stack([Fm, Fi, Fd], axis=-1)  # (W,3)
             # Return carry for next iteration, and F as output
             return (F, xbegin_j), F
+        return scan_fn
     
-    # First row of F just has transitions from start->delete->delete....
+    # First row of F (j=0) just has transitions from start->delete->delete....
     Fd0 = jnp.pad(jnp.pow (t[D,D], jnp.arange(xend[0])) * t[S,D], (1,W-xend[0]-1))  # (W,)
     F0 = jnp.stack([jnp.zeros_like(Fd0), jnp.zeros_like(Fd0), Fd0], axis=-1)  # (W,3)
 
-    # Now scan over yobs
-    _, F = jax.lax.scan (scan_fn, (F0, xbegin[0], 0), (yobs, xbegin[1:]), length=Ly)
+    # Second row (j=1) is special, contains transitions from S state on first row
+    make_row1 = make_scan_fn (j_is_one=True)
+    _, F1 = jax.lax.cond (
+                Ly > 0,
+                lambda: make_row1((F0, xbegin[0]), (yobs[0], xbegin[1])),
+                lambda: (0, jnp.array([]))  # empty array if Ly < 1
+            )    
 
-    Fsparse = jnp.stack([F0, F], axis=0)  # (Ly+1,W,3)
+
+    # Now scan over yobs
+    scan_row = make_scan_fn (j_is_one=False)
+    _, F = jax.lax.cond (
+                Ly > 1,
+                lambda: jax.lax.scan (scan_row, (F1, xbegin[1], 0), (yobs[1:], xbegin[2:]), length=Ly-1),
+                lambda: (0, jnp.array([]))  # empty array if Ly < 2
+            )    
+
+    Fsparse = jnp.stack([F0, F1, F], axis=0)  # (Ly+1,W,3)
     return Fsparse
 
 
