@@ -4,4 +4,4 @@ aws/*.lambda
 aws/*.s3
 aws/*.stage
 aws/*.zip
-
+venv/*
