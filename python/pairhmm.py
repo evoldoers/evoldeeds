@@ -13,7 +13,7 @@ from typing import Callable, Any
 def pairhmm_forward (params: Tuple,  # (t, submat)
                      xobs: ArrayLike,  # (Lx,)
                      yobs: ArrayLike,  # (Ly,)
-                     env: ArrayLike   # (2,Ly+1)  where env[0] is xbegin and env[1] is xend
+                     env: Tuple[ArrayLike,ArrayLike,int,int,int,int],   # env = (xbegin, xend, ybegin, yend, startState, endState). xbegin, xend have shape (Ly+1)
                      ) -> ArrayLike:  # (W,Ly+1,3) where W = max(xend+2-xbegin) rounded up to nearest power of 2
     t, e = params
 
@@ -35,17 +35,22 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
     assert jnp.all(yobs < A)
     assert jnp.all(yobs >= 0)
 
-    assert env.shape == (2,Ly+1)
-    xbegin = env[0]
-    xend = env[-1]
-    assert jnp.all(env >= 0)
+    xbegin, xend, ybegin, yend, startState, endState = env
+    assert xbegin.shape == (Ly+1,)
+    assert xend.shape == (Ly+1,)
+    assert ybegin >= 0 & ybegin < Ly & yend > ybegin & yend <= Ly
+    assert startState in (S,M,I,D)
+    assert endState in (M,I,D,E)
+    assert jnp.all(xbegin >= 0)
     assert jnp.all(xbegin <= Lx)
-    assert jnp.all(xend <= Lx+1)
     assert jnp.all(xend > xbegin)
+    assert jnp.all(xend <= Lx+1)
     assert jnp.all(xbegin[1:] <= xend[:-1])
     assert jnp.all(xbegin[1:] >= xbegin[:-1])
     assert xbegin[0] == 0
     assert xend[-1] == Lx+1
+
+    ydim = yend - ybegin
 
     # pad max envelope width with 2, round up to nearest power of 2
     W = jnp.max (xend - xbegin) + 2
@@ -59,9 +64,9 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
     ti2d = t[I,D]
     td2d = t[D,D]
 
-    # We will calculate F(i,j,k) = P(x[0:i],y[0:j],k) for xbegin[j]<=i<xend[j], 0<=j<=Ly, 0<=k<3
-    # This will be stored as F(i,j,k) = Fsparse[1+i-xbegin[j],j,k]
-    K = 3  # Fsparse will have shape (W,Ly+1,K)
+    # We will calculate F(i,j,k) = P(x[0:i],y[0:j],k) for xbegin[j]<=i<xend[j], ybegin<=j<=yend, 0<=k<3
+    # This will be stored as F(i,j,k) = Fsparse[1+i-xbegin[j],j-ybegin,k]
+    K = 3  # Fsparse will have shape (W,ydim+1,K)
 
     # a function created by make_scan_fn has the same type signature as scan_fn
     def make_scan_fn (j_is_one: bool) -> Callable[[Tuple[ArrayLike, int], Tuple[int, int]], Tuple[Tuple[ArrayLike, int], ArrayLike]]:
@@ -86,13 +91,13 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
             if j_is_one:
                 Fi = jax.lax.cond(
                         xbegin_j == 0,
-                        lambda Fi: Fi.at[0].set(t[S, I]),
+                        lambda Fi: Fi.at[0].set(t[startState, I]),
                         lambda Fi: Fi,
                         Fi
                     )
                 Fm = jax.lax.cond(
                         xbegin_j <= 1,
-                        lambda Fm: Fm.at[1 - xbegin_j].set(t[S, M] * ex[0, yTok]),
+                        lambda Fm: Fm.at[1 - xbegin_j].set(t[startState, M] * ex[0, yTok]),
                         lambda Fm: Fm,
                         Fm
                     )        
@@ -126,46 +131,58 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
         return scan_fn
     
     # First row of F (j=0) just has transitions from start->delete->delete....
-    Fd0 = jnp.pad(jnp.pow (t[D,D], jnp.arange(xend[0])) * t[S,D], (1,W-xend[0]-1))  # (W,)
+    Fd0 = jnp.pad(jnp.pow (t[D,D], jnp.arange(xend[0])) * t[startState,D], (1,W-xend[0]-1))  # (W,)
     F0 = jnp.stack([jnp.zeros_like(Fd0), jnp.zeros_like(Fd0), Fd0], axis=-1)  # (W,3)
 
     # Second row (j=1) is special, contains transitions from S state on first row
     make_row1 = make_scan_fn (j_is_one=True)
     _, F1 = jax.lax.cond (
-                Ly > 0,
-                lambda: make_row1((F0, xbegin[0]), (yobs[0], xbegin[1])),
-                lambda: (0, jnp.array([]))  # empty array if Ly < 1
+                ydim > 0,
+                lambda: make_row1((F0, xbegin[ybegin]), (yobs[ybegin], xbegin[ybegin+1])),
+                lambda: (0, jnp.array([]))  # empty array if ydim < 1
             )    
 
 
     # Now scan over yobs
     scan_row = make_scan_fn (j_is_one=False)
     _, F = jax.lax.cond (
-                Ly > 1,
-                lambda: jax.lax.scan (scan_row, (F1, xbegin[1], 0), (yobs[1:], xbegin[2:]), length=Ly-1),
-                lambda: (0, jnp.array([]))  # empty array if Ly < 2
+                ydim > 1,
+                lambda: jax.lax.scan (scan_row, (F1, xbegin[ybegin+1], 0), (yobs[ybegin+1:], xbegin[ybegin+2:]), length=ydim-1),
+                lambda: (0, jnp.array([]))  # empty array if ydim < 2
             )    
 
-    Fsparse = jnp.stack([F0, F1, F], axis=0)  # (Ly+1,W,3)
-    return Fsparse
+    Fsparse = jnp.stack([F0, F1, F], axis=0)  # (ydim+1,W,3)
+    Fend = jnp.dot(Fsparse[yend-ybegin,Lx-xbegin[yend],:], t[(M,I,D),endState])
+
+    return Fsparse, Fend
 
 
 def getf (Fsparse: ArrayLike,  # (Ly+1,W,3)
-          env: ArrayLike,   # (2,Ly+1)  where env[0] is xbegin and env[1] is xend
+          Fend: ArrayLike,  # (1,)
+          env: Tuple[ArrayLike,ArrayLike,int,int,int,int],   # env = (xbegin, xend, ybegin, yend, startState, endState). xbegin, xend have shape (Ly+1)
           t: ArrayLike,  # (5,5)
           i, j, k) -> ArrayLike:
-    assert Fsparse.ndim == 3
-    assert env.ndim == 2
-    assert env.shape[0] == 2
-    assert Fsparse.shape[0] == env.shape[1]
-    assert Fsparse.shape[2] == 3
-
-    assert t.shape == (5,5)
     S,M,I,D,E = range(5)
 
-    Lx = env[1,-1] - 1
+    assert Fsparse.ndim == 3
+    assert Fsparse.shape[2] == 3
     Ly = Fsparse.shape[0] - 1
+    W = Fsparse.shape[1]
 
+    assert Fend.shape == (1,)
+
+    xbegin, xend, ybegin, yend, startState, endState = env
+    assert xbegin.shape == (Ly+1,)
+    assert xend.shape == (Ly+1,)
+    Lx = xend[-1] - 1
+    assert ybegin >= 0 & ybegin < Ly & yend > ybegin & yend <= Ly
+    assert startState in (S,M,I,D)
+    assert endState in (M,I,D,E)
+
+    assert t.shape == (5,5)
+
+    # TODO: accept a precomputed set of cell coordinates for the constrained part of the state path (<ybegin or >yend),
+    # along with the path probabilities to, or from, those cells, and use them to compute the requested cell.
     return jax.lax.cond ((i == 0) & (j == 0) & (k == 0),   # start state
                          lambda: 1.0,
                          lambda: jax.lax.cond(
