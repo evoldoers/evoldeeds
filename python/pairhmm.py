@@ -70,15 +70,23 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
 
     # a function created by make_scan_fn has the same type signature as scan_fn
     def make_scan_fn (j_is_one: bool) -> Callable[[Tuple[ArrayLike, int], Tuple[int, int]], Tuple[Tuple[ArrayLike, int], ArrayLike]]:
-        def scan_fn (carry: Tuple[ArrayLike, int],  # (Fprev, xbegin_prev)
-                     jInfo: Tuple[int, int]) -> Tuple[Tuple[ArrayLike, int], ArrayLike]:  # (F, xbegin_j), F
-            Fprev, xbegin_prev = carry
-            yTok, xbegin_j = jInfo
-            # Line up Fprev_ins so its incoming insert states are aligned with ours,
-            # and Fprev_mat so its incoming match states are aligned with ours
-            xshift = xbegin_j - xbegin_prev
-            Fprev_ins = jax.lax.dynamic_slice_in_dim(Fprev, xshift, W - xshift, axis=0)
-            Fprev_ins = jnp.pad(Fprev_ins, ((0, xshift), (0, 0)))  # (W,K)
+        def scan_fn (carry: Tuple[ArrayLike, int, int],  # (Fprev, xbegin_prev, xend_prev)
+                     jInfo: Tuple[int, int, int]  # (yTok, xbegin_j, xend_j)
+                     ) -> Tuple[Tuple[ArrayLike, int, int], ArrayLike]:  # (F, xbegin_j, xend_j), F
+            Fprev, xbegin_prev, xend_prev = carry
+            yTok, xbegin_j, xend_j = jInfo
+            # Line up Fprev_ins so its incoming transitions to insert states are aligned,
+            # and Fprev_mat so its incoming transitions to match states are aligned
+            prev_keep = jnp.maximum ([xend_prev - xbegin_j, 0])
+            prev_gap = jnp.maximum ([xbegin_j - xend_prev, 0])
+            prev_pad = xend_j - jnp.maximum ([xbegin_j, xend_prev])
+            Fprev_del_xend = jnp.dot (Fprev[xend_prev-1-xbegin_prev,:], t[:,D])
+            Fprev_del_pad = Fprev_del_xend * jnp.pow (t[D,D], jnp.arange(prev_pad) + prev_gap)  # (prev_pad,)
+            Fprev_del_pad = jnp.concatenate ([jnp.zeros((prev_pad,K-1)),
+                                              Fprev_del_pad], axis=-1)  # (prev_pad,K)
+            Fprev_ins = jnp.concatenate ([jax.lax.dynamic_slice_in_dim(Fprev, W - prev_keep, prev_keep, axis=0),
+                                          Fprev_del_pad,
+                                          jnp.zeros((W - prev_keep - prev_pad,K))], axis=0)  # (W,K)
             Fprev_mat = jnp.roll(Fprev_ins, 1, axis=0)  # (W,K)
             # Similarly, line up ex
             ex_j = jax.lax.dynamic_slice_in_dim(ex[:,yTok], xbegin_j, W, axis=0)  # (W,)
@@ -127,7 +135,7 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
             # Combine match, insert, and delete
             F = jnp.stack([Fm, Fi, Fd], axis=-1)  # (W,3)
             # Return carry for next iteration, and F as output
-            return (F, xbegin_j), F
+            return (F, xbegin_j, xend_j), F
         return scan_fn
     
     # First row of F (j=0) just has transitions from start->delete->delete....
@@ -138,7 +146,7 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
     make_row1 = make_scan_fn (j_is_one=True)
     _, F1 = jax.lax.cond (
                 ydim > 0,
-                lambda: make_row1((F0, xbegin[ybegin]), (yobs[ybegin], xbegin[ybegin+1])),
+                lambda: make_row1((F0, xbegin[ybegin], xend[ybegin]), (yobs[ybegin], xbegin[ybegin+1], xend[ybegin+1])),
                 lambda: (0, jnp.array([]))  # empty array if ydim < 1
             )    
 
@@ -147,7 +155,10 @@ def pairhmm_forward (params: Tuple,  # (t, submat)
     scan_row = make_scan_fn (j_is_one=False)
     _, F = jax.lax.cond (
                 ydim > 1,
-                lambda: jax.lax.scan (scan_row, (F1, xbegin[ybegin+1], 0), (yobs[ybegin+1:], xbegin[ybegin+2:]), length=ydim-1),
+                lambda: jax.lax.scan (scan_row,
+                                      (F1, xbegin[ybegin+1], xend[ybegin+1], 0),
+                                      (yobs[ybegin+1:], xbegin[ybegin+2:], xend[ybegin+2:]),
+                                      length=ydim-1),
                 lambda: (0, jnp.array([]))  # empty array if ydim < 2
             )    
 
