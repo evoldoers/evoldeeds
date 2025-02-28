@@ -7,7 +7,7 @@ const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 //  - distance: the distance from this node to its parent (not present for the root node)
 //  - cigar: the CIGAR string for the alignment from the parent to this node (root node must contain all inserts)
 //  - child: an array of child nodes (not present for leaf nodes)
-//  - seq: the sequence at this node (may be omitted under some circumstances)
+//  - seq: the sequence at this node (may be omitted under some circumstances, e.g. internal nodes)
 //  - id: a unique identifier for this node (may be omitted unless needed)
 
 // Expand a history tree to a multiple alignment and a tree
