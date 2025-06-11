@@ -8,7 +8,7 @@ import likelihood
 import approx
 
 if len(sys.argv) != 3:
-    print("Usage: {} model.json method >model_prep.json\n\nmethod can be 'poly' or 'piecewise'".format(sys.argv[0]))
+    print("Usage: {} model.json method >model_prep.json\n\nmethod can be 'tkf92', 'poly', or 'piecewise'".format(sys.argv[0]))
     sys.exit(1)
 
 modelFilename, method = sys.argv[1:]
@@ -35,6 +35,8 @@ elif method == 'piecewise':
             'lmxy': [lam, mu, x, y],
             'abuq': [c.tolist() for c in counts]
             }
+elif method == 'tkf92':
+    hmm = { 'lmxy': indelParams }
 
 mixture_diag = [(rootProb, approx.substitutionMatrixDiagonalForm(subRate)) for subRate, rootProb in mixture]
 

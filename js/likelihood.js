@@ -1,5 +1,6 @@
 import * as math from 'mathjs';
 import { transitionMatrix, dummyRootTransitionMatrix, normalizeTransMatrix, smallTimeTransitionMatrixFromCounts } from './h20.js';
+import { tkf92approxTransitionMatrix } from './tkf92.js';
 import { expandCigarTree, countGapSizes, doLeavesMatchSequences } from './cigartree.js';
 
 // Binomial coefficient using gamma functions
@@ -103,9 +104,12 @@ const makeBranchTransMatrices = (distanceToParent, branchTransConfig) => {
     } else if ('poly' in branchTransConfig) {
         const { poly, tmin, tmax } = branchTransConfig;
         branchTransMatrix = distanceToParent.map ((t)=> polyBranchTransMatrix(t,poly,tmin,tmax));
-    } else {
+    } else if ('alphabet' in branchTransConfig) {
         const { indelParams, alphabet } = branchTransConfig;
         branchTransMatrix = distanceToParent.map ((t) => transitionMatrix(t,indelParams,alphabet.length));
+    } else {
+        const { lmxy } = branchTransConfig;
+        branchTransMatrix = distanceToParent.map ((t) => tkf92approxTransitionMatrix(t,lmxy));
     }
     return [dummyRootTransitionMatrix()].concat (branchTransMatrix);
 };

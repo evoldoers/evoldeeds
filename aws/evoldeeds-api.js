@@ -70,7 +70,7 @@ export const handler = async (event, context) => {
         const seqById = family.Item.seqById;
         const { history, player } = JSON.parse(event.body);
         const modelJson = JSON.parse (fs.readFileSync(modelFilename).toString());
-        const score = historyScore (history, seqById, modelJson);
+        const score = historyScore (history, seqById, { ...modelJson, hmm: undefined });  // hmm undefined forces TKF92 model
 
         const created = Date.now();
         await dynamo.send(

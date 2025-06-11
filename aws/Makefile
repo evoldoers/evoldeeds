@@ -22,7 +22,7 @@ evoldeeds-api.zip: evoldeeds-api.js
 	mkdir -p $(STAGING_DIR)/node_modules
 	cp $^ $(STAGING_DIR)
 	mv $(STAGING_DIR)/$< $(STAGING_DIR)/index.mjs
-	cp ../js/cigartree.js ../js/h20.js ../js/likelihood.js ../package.json $(STAGING_DIR)
-	cp ../data/lg08prep.json $(STAGING_DIR)/model.json
+	cp ../js/cigartree.js ../js/h20.js ../js/tkf92.js ../js/likelihood.js ../package.json $(STAGING_DIR)
+	cp ../data/lg08tkf92.json $(STAGING_DIR)/model.json
 	cd $(STAGING_DIR); npm install mathjs
 	cd $(STAGING_DIR); $(ZIP) -r ../$@ *
