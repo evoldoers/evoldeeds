@@ -1,6 +1,6 @@
 # EvolDeeds
 
-This repository contains Python and JavaScript implementations of
+This repository contains JavaScript implementations of
 various algorithms for computing the likelihoods of phylogenetic alignments
 of proteins, as well as the beginnings of a gamification
 framework for crowdsourced phylogenetics.
@@ -24,18 +24,6 @@ It includes implementations of
 Two different models ([H20](https://academic.oup.com/genetics/article/216/4/1187/6065876) and [KM03](https://pubmed.ncbi.nlm.nih.gov/14529629/)) are implemented for calculating the HMM transition probabilities in terms of the parameters of the underlying indel model.
 
 The JavaScript code also includes a JSON data structure (Cigar Tree) that compactly represents a phylogenetic tree, multiple sequence alignment (MSA), and ancestral sequence reconstruction, using a [CIGAR](https://jef.works/blog/2017/03/28/CIGAR-strings-for-dummies/)-like format.
-
-## Python
-
-The `python/` subdirectory of the repo contains considerably more in the way of algorithms, though the basics should be compatible with the JavaScript code described above.
-
-The Python code is implemented using [Jax](https://github.com/google/jax),
-making it suitable for model-fitting (which should be accelerated if using GPUs).
-
-In addition to the models and data structures described above in the JavaScript section, the Python codebase includes
-- an implementation of the [CherryML](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10644697/) approach to fitting substitution rate matrices
-- several variations of CherryML and combinations with EM-like algorithms for fitting mixtures of substitution models
-- an implementation of a [variational algorithm](https://www.jmlr.org/papers/v11/cohn10a.html) for CTBN Potts models, for computing alignment substitution likelihoods where there are interactions between amino acids (i.e. because they are in physical contact in the folded 3D structure)
 
 ## Data
 
