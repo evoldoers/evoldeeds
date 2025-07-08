@@ -11,7 +11,7 @@ export const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 export const logsumexp = (arr) => arr.filter((x)=>x>-Infinity).reduce((a,b) => Math.max(a,b) + Math.log(1 + Math.exp(-Math.abs(a-b))),-Infinity);
 
 // Returns the (log of the) probability of seeing a particular size of gap
-const gapProb = (nDeletions, nInsertions, transmat) => {
+const logGapProb = (nDeletions, nInsertions, transmat) => {
   const [[a,b,c],[f,g,h],[p,q,r]] = transmat;
   const log = Math.log;
   const Ck = (k) => {
