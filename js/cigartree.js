@@ -129,16 +129,16 @@ export const doLeavesMatchSequences = (expandedHistory, seqById) => {
 
 export const countGapSizes = (expandedCigar) => {
     const counts = expandedCigar.map ((excig) => {
-        let nInsertions = 0, nDeletions = 0, gapSizeCounts = {}, transCounts = [[0,0,0],[0,0,0],[0,0,0]];
+        let nInsertions = 0, nDeletions = 0, gapSizeCounts = {};
+        let startState = 0;  // S
+        let endState = 1;  // M
         const countGapSize = () => {
-            const gapSize = nDeletions + ' ' + nInsertions;
+            const gapSize = startState + ' ' + endState + ' ' + nDeletions + ' ' + nInsertions;
             if (gapSize in gapSizeCounts)
                 gapSizeCounts[gapSize]++;
             else
                 gapSizeCounts[gapSize] = 1;
         };
-        const stateIndex = (c) => 'MID'.indexOf(c);
-        let prev = stateIndex('M');
         for (let pos = 0; pos < excig.length; pos++) {
             const c = excig[pos];
             if (c === 'I')
@@ -148,16 +148,17 @@ export const countGapSizes = (expandedCigar) => {
             else {
                 countGapSize();
                 nInsertions = nDeletions = 0;
+                startState = 1;  // M
             }
             const state = stateIndex(c);
             transCounts[prev][state]++;
             prev = state;
         }
+        endState = 4;  // E
         countGapSize();
-        transCounts[prev][stateIndex('M')]++;
-        return { gapSizeCounts, transCounts };
+        return gapSizeCounts;
     });
-    return Object.fromEntries (['gapSizeCounts','transCounts'].map ((key,i) => [key,counts.map (count => count[key])]));
+    return counts;
 };
 
 const parseNewick = (newickStr) => {

@@ -1,6 +1,5 @@
 import * as math from 'mathjs';
-import { transitionMatrix, dummyRootTransitionMatrix, normalizeTransMatrix, smallTimeTransitionMatrixFromCounts } from './h20.js';
-import { tkf92approxTransitionMatrix } from './tkf92.js';
+import { tkf92BranchTransitionMatrix } from './tkf92.js';
 import { expandCigarTree, countGapSizes, doLeavesMatchSequences } from './cigartree.js';
 
 // Binomial coefficient using gamma functions
@@ -10,9 +9,17 @@ export const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 
 export const logsumexp = (arr) => arr.filter((x)=>x>-Infinity).reduce((a,b) => Math.max(a,b) + Math.log(1 + Math.exp(-Math.abs(a-b))),-Infinity);
 
-// Returns the (log of the) probability of seeing a particular size of gap
-const logGapProb = (nDeletions, nInsertions, transmat) => {
-  const [[a,b,c],[f,g,h],[p,q,r]] = transmat;
+// Returns the (log of the) probability of seeing a particular size of gap,
+// by combinatorially summing over all paths with the right number of I's and D's.
+// Internal gaps: startState = endState = 1 (Match)
+// Gaps at the start: startState = 0 (Start), endState = 1 (Match)
+// Gaps at the end: startState = 1 (Match), endState = 4 (End)
+// No aligned positions: startState = 0 (Start), endState = 4 (End)
+const logGapProb = (nDeletions, nInsertions, transmat, startState, endState) => {
+  const insState = 2, delState = 3;
+  const rowIndices = [startState, insState, delState];
+  const colIndices = [endState, insState, delState];
+  const [[a,b,c],[f,g,h],[p,q,r]] = rowIndices.map ((i) => colIndices.map ((j) => transmat[i][j]));
   const log = Math.log;
   const Ck = (k) => {
     const logbinom = log_binom(nDeletions>k ? nDeletions-1 : k,k-1) + log_binom(nInsertions>k ? nInsertions-1 : k,k-1);  // guard against out-of-range errors
@@ -28,6 +35,20 @@ const logGapProb = (nDeletions, nInsertions, transmat) => {
              : (nDeletions - 1)*log(g) + (nInsertions-1)*log(r)
               + log (b*h*p + c*q*f + sum (Array.from({length:nDeletions+nInsertions}, (_,k) => (k<nInsertions || k<nDeletions) && k<=nInsertions && k<=nDeletions ? Ck(k) : 0))));
          };
+
+// Compute the indel log-likelihood for a multiple sequence alignment
+export const gapLogLike = (gapSizeCounts, distanceToParent, branchTransConfig) => {
+    const branchTransMatrices = makeBranchTransMatrices (distanceToParent, branchTransConfig);
+    const loglike = distanceToParent.reduce ((acc, d, i) => {
+        const transmat = branchTransMatrices[i];
+        const gapSizeCountForNode = gapSizeCounts[i] || {};
+        return acc + Object.keys(gapSizeCountForNode).reduce((sum, size) => {
+            const [startState, endState, nDeletions, nInsertions] = size.split(' ').map(parseInt);
+            return sum + gapSizeCountForNode[size] * logGapProb(nDeletions, nInsertions, transmat, startState, endState);
+        }, 0);
+    }, 0);
+    return loglike;
+};
 
 // Compute the substitution log-likelihood for a multiple sequence alignment
 // Input parameters:
@@ -89,52 +110,11 @@ const makeBranchProbMatrices = (distanceToParent, branchProbMatrixConfig) => {
     return branchProbMatrix;
 };
 
-export const transLogLike = (transCounts, distanceToParent, branchTransConfig) => {
-    const transMat = makeBranchTransMatrices (distanceToParent, branchTransConfig);
-    const logTransMat = transMat.map ((mt) => mt.map((mti) => mti.map((mtij) => Math.log (Math.max (mtij, Number.MIN_VALUE)))));
-    const transll = transCounts.map ((mt,t) => mt.map((mti,i) => mti.map((mtij,j) => mtij * logTransMat[t][i][j])));
-    return transll.map ((mt) => sum (mt.map(sum)));
-};
-
 const makeBranchTransMatrices = (distanceToParent, branchTransConfig) => {
-    let branchTransMatrix;
     distanceToParent = distanceToParent.slice(1);
-    if ('steps' in branchTransConfig) {
-        branchTransMatrix = distanceToParent.map ((t)=> piecewiseBranchTransMatrix(t,branchTransConfig));
-    } else if ('poly' in branchTransConfig) {
-        const { poly, tmin, tmax } = branchTransConfig;
-        branchTransMatrix = distanceToParent.map ((t)=> polyBranchTransMatrix(t,poly,tmin,tmax));
-    } else if ('alphabet' in branchTransConfig) {
-        const { indelParams, alphabet } = branchTransConfig;
-        branchTransMatrix = distanceToParent.map ((t) => transitionMatrix(t,indelParams,alphabet.length));
-    } else {
-        const { lmxy } = branchTransConfig;
-        branchTransMatrix = distanceToParent.map ((t) => tkf92approxTransitionMatrix(t,lmxy));
-    }
+    const { lmxy } = branchTransConfig;
+    const branchTransMatrix = distanceToParent.map ((t) => tkf92BranchTransitionMatrix(t,lmxy));
     return [dummyRootTransitionMatrix()].concat (branchTransMatrix);
-};
-
-const piecewiseBranchTransMatrix = (t, branchTransConfig) => {
-    const { t1, tmax, steps, lmxy, abuq } = branchTransConfig;
-    const logRatioPerStep = Math.log(tmax/t1) / steps;
-    const step = 1 + Math.ceil (Math.log(t/t1) / logRatioPerStep);
-    let abuq_t;
-    if (step > steps)
-        abuq_t = abuq[abuq.length - 1];
-    else {
-        const t_step = t1 * Math.exp ((step - 1) * logRatioPerStep), t_prev = step > 1 ? (t1 * Math.exp ((step - 2) * logRatioPerStep)) : 0;
-        const dt_rel = (t - t_prev) / (t_step - t_prev);
-        abuq_t = abuq[step].map ((abuq_step_n, n) => abuq[step-1][n] * (1 - dt_rel) + abuq_step_n * dt_rel);
-    }
-    return smallTimeTransitionMatrixFromCounts (t, lmxy, abuq_t);
-};
-
-const polyBranchTransMatrix = (t, coeffs, tmin, tmax) => {
-    t = Math.min (tmax, Math.max (tmin, t));
-    const deg = coeffs[0][0].length;
-    const tPow = Array.from ({length:deg},(_,n)=>t**n);
-    const trans = coeffs.map ((coeffs_i) => coeffs_i.map ((coeffs_ij) => coeffs_ij.reduce ((val, coeff, n) => val + coeff*tPow[n], 0)));
-    return normalizeTransMatrix(trans);
 };
 
 const normalizeSubModel = (subRate, rootProb) => {
@@ -151,6 +131,7 @@ export const parseHistorianParams = (params) => {
     const alphabet = params['alphabet'];
     const alphArray = alphabet.split('');
     const parseSubRate = (p) => {
+        console.warn({alphArray, p});
         let sr = alphArray.map ((i) => alphArray.map ((j) => (p['subrate'][i] || {})[j] || 0));
         let rp = alphArray.map ((i) => p['rootprob'][i] || 0);
         const { subRate, rootProb } = normalizeSubModel (sr, rp);
@@ -167,7 +148,7 @@ export const historyScore = (history, seqById, modelJson) => {
         throw new Error ("History does not match sequences");
 
     const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn } = expandedHistory;
-    const { transCounts } = countGapSizes (expandedCigar);
+    const gapSizeCounts = countGapSizes (expandedCigar);
 
     const { alphabet, hmm, mixture } = modelJson;
 
@@ -175,9 +156,10 @@ export const historyScore = (history, seqById, modelJson) => {
     const subll = subLogLike (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, root, { evecs_l, evals, evecs_r });
     const subll_total = sum (subll);
 
-    const transll = transLogLike (transCounts, distanceToParent, hmm);
+    const transll = gapLogLike (gapSizeCounts, distanceToParent, hmm);
     const transll_total = sum (transll);
 
+    // Subtract null model log likelihood
     const tokens = alphabet.split('');
     let resFreq = Object.fromEntries (tokens.map((c) => [c,0]));
     Object.values(seqById).forEach ((seq) => seq.split('').forEach((c) => ++resFreq[c]));
