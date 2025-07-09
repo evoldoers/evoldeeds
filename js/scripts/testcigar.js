@@ -17,10 +17,10 @@ const ct = makeCigarTree (treeStr, alignStr);
 const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn } = expandCigarTree (ct);
 const lcAlignment = alignment.map ((s) => s.toLowerCase());
 
-const { alphabet, mixture, indelParams } = parseHistorianParams (modelJson);
+const { alphabet, substParams, indelParams } = parseHistorianParams (modelJson);
 const gapSizeCounts = countGapSizes (expandedCigar);
 
-const { subRate, rootProb } = mixture[0];
+const { subRate, rootProb } = substParams;
 const subll = subLogLike (lcAlignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, rootProb, { subRate });
 const subll_total = sum (subll);
 
