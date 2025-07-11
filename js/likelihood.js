@@ -1,5 +1,5 @@
 import * as math from 'mathjs';
-import { tkf92RootTransitionMatrix, tkf92BranchTransitionMatrix } from './tkf92.js';
+import { calcTkf92EqmProbs, tkf92RootTransitionMatrix, tkf92BranchTransitionMatrix } from './tkf92.js';
 import { expandCigarTree, countGapSizes, doLeavesMatchSequences } from './cigartree.js';
 
 // Binomial coefficient using gamma functions
@@ -8,6 +8,21 @@ const log_binom = (x, y) => lgamma(x+1) - lgamma(y+1) - lgamma(x-y+1);
 export const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 
 export const logsumexp = (arr) => arr.filter((x)=>x>-Infinity).reduce((a,b) => Math.max(a,b) + Math.log(1 + Math.exp(-Math.abs(a-b))),-Infinity);
+
+// Convert from expectations (mean eqm sequence length, mean insertion event length, mean lifespan of residue) to GGI params (insertion & deletion rates & extension probs)
+// We are making use of the following identities:
+//  1/inslen = 1 - insextprob
+//  1/seqlen = delextprob/insextprob + 1
+//  1/reslife = delrate / (1 - delextprob)
+//  insrate * delextprob * (1 - insextprob) = delrate * insextprob * (1 - delextprob)
+export const expectationsToGgiParams = (seqlen, inslen, reslife) => {
+    const insextprob = 1 - 1 / inslen;  // GGI parameter x
+    const delextprob = insextprob * (seqlen + 1) / seqlen;  // GGI parameter y
+    const delrate = (1 / reslife) * (1 - delextprob);  // GGI parameter mu_0
+    const insrate = delrate * insextprob * (1 - delextprob) / (delextprob * (1 - insextprob));   // GGI parameter lambda_0
+    return { insrate, delrate, insextprob, delextprob };
+};
+
 
 // Returns the (log of the) probability of seeing a particular size of gap,
 // by combinatorially summing over all paths with the right number of I's and D's.
@@ -37,16 +52,16 @@ const logGapProb = (nDeletions, nInsertions, transmat, startState, endState) => 
          };
 
 // Compute the indel log-likelihood for a multiple sequence alignment
-export const gapLogLike = (gapSizeCounts, distanceToParent, indelParams) => {
-    const branchTransMatrices = makeBranchTransMatrices (distanceToParent, indelParams);
-    const loglike = distanceToParent.reduce ((acc, d, i) => {
-        const transmat = branchTransMatrices[i];
+export const gapLogLike = (gapSizeCounts, distanceToParent, ggiParams) => {
+    const branchTransMatrices = makeBranchTransMatrices (distanceToParent, ggiParams);
+    const loglike = branchTransMatrices.map ((transmat, i) => {
         const gapSizeCountForNode = gapSizeCounts[i] || {};
-        return acc + Object.keys(gapSizeCountForNode).reduce((sum, size) => {
-            const [startState, endState, nDeletions, nInsertions] = size.split(' ').map(parseInt);
+        return Object.keys(gapSizeCountForNode).reduce((sum, size, _i) => {
+            const [startState, endState, nDeletions, nInsertions] = size.split(' ').map(Number);
+            const n = gapSizeCountForNode[size], lp = logGapProb(nDeletions, nInsertions, transmat, startState, endState);
             return sum + gapSizeCountForNode[size] * logGapProb(nDeletions, nInsertions, transmat, startState, endState);
         }, 0);
-    }, 0);
+    });
     return loglike;
 };
 
@@ -61,7 +76,7 @@ export const gapLogLike = (gapSizeCounts, distanceToParent, indelParams) => {
 //  subRate: substitution rate matrix
 //  rootProb: root frequencies (typically equilibrium frequencies for substitution rate matrix)
 export const subLogLike = (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, rootProb, branchProbMatrixConfig, gapChar = '-') => {
-    const branchProbMatrix = makeBranchProbMatrices (distanceToParent, branchProbMatrixConfig);
+    const branchProbMatrix = makeBranchSubstMatrices (distanceToParent, branchProbMatrixConfig);
     const branchLogProbMatrix = branchProbMatrix.map ((m) => math.map (m, (x) => Math.log(Math.max(Number.MIN_VALUE,x))));
     const rootLogProb = math.map (math.matrix(rootProb), Math.log);
     const nColumns = leavesByColumn.length;
@@ -92,7 +107,7 @@ export const subLogLike = (alignment, distanceToParent, leavesByColumn, internal
     return colLogProb;
 };
 
-const makeBranchProbMatrices = (distanceToParent, branchProbMatrixConfig) => {
+const makeBranchSubstMatrices = (distanceToParent, branchProbMatrixConfig) => {
     let branchProbMatrix;
     if ('evals' in branchProbMatrixConfig) {
         const { evecs_l, evals, evecs_r } = branchProbMatrixConfig;
@@ -110,10 +125,10 @@ const makeBranchProbMatrices = (distanceToParent, branchProbMatrixConfig) => {
     return branchProbMatrix;
 };
 
-const makeBranchTransMatrices = (distanceToParent, indelParams) => {
+const makeBranchTransMatrices = (distanceToParent, ggiParams) => {
     distanceToParent = distanceToParent.slice(1);
-    const branchTransMatrix = distanceToParent.map ((t) => tkf92BranchTransitionMatrix(t,indelParams));
-    return [tkf92RootTransitionMatrix(indelParams)].concat (branchTransMatrix);
+    const branchTransMatrix = distanceToParent.map ((t) => tkf92BranchTransitionMatrix(t,ggiParams));
+    return [tkf92RootTransitionMatrix(ggiParams)].concat (branchTransMatrix);
 };
 
 export const historyScore = (history, seqById, modelJson) => {
@@ -127,34 +142,31 @@ export const historyScore = (history, seqById, modelJson) => {
     const { alphabet, seqlen, inslen, reslife, evecs_l, evals, evecs_r, root } = modelJson;
 
     const alphArray = alphabet.split('');
+    const subll_by_col = subLogLike (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphArray, root, { evecs_l, evals, evecs_r });
+    const subll_total = sum (subll_by_col);
 
-    const insextprob = 1 - 1 / inslen;  // GGI parameter y
-    const delextprob = insextprob * seqlen / (seqlen + 1);  // GGI parameter x
-    const delrate = (1 / reslife) * (1 - insextprob);  // GGI parameter mu_0
-    const insrate = delrate * delextprob * (1 - insextprob) / (insextprob * (1 - delextprob));
-    const indelParams = [insrate, delrate, insextprob, delextprob];
+    const ggiParams = expectationsToGgiParams (seqlen, inslen, reslife);
+    const gapll_by_branch = gapLogLike (gapSizeCounts, distanceToParent, ggiParams);
+    const gapll_total = sum (gapll_by_branch);
 
-    const subll = subLogLike (alignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphArray, root, { evecs_l, evals, evecs_r });
-    const subll_total = sum (subll);
-
-    const gapll = gapLogLike (gapSizeCounts, distanceToParent, indelParams);
-    const gapll_total = sum (gapll);
-
-    // Subtract null model log substitution likelihood
+    // Subtract null model log likelihood
     const tokens = alphabet.split('');
-    let resFreq = Object.fromEntries (tokens.map((c) => [c,0])), nStarts = 0, nEnds = 0, nExtends = 0;
+    let nRes = Object.fromEntries (tokens.map((c) => [c,0])), nStarts = 0, nEnds = 0, nExtends = 0, nEmpties = 0;
     Object.values(seqById).forEach ((seq) => {
-        seq.split('').forEach((c) => ++resFreq[c]);
-        ++nEnds;
+        seq.split('').forEach((c) => ++nRes[c]);
         if (seq.length > 0) {
             ++nStarts;
+            ++nEnds;
             nExtends += seq.length - 1;
-        }
+        } else
+            ++nEmpties;
     });
-    const null_emit_ll = tokens.reduce ((ll, c, n) => ll + resFreq[c] * Math.log(root[n]), 0);
-    const null_length_ll = 0;  // TODO: implement this
+    const subll_null = tokens.reduce ((ll, c, n) => ll + nRes[c] * Math.log(root[n]), 0);
 
-    const score = subll_total + gapll_total - null_emit_ll - null_length_ll;
+    const { kappa, nu } = calcTkf92EqmProbs(ggiParams);
+    const gapll_null = nStarts * Math.log(kappa) + nEmpties * Math.log(1 - kappa) + nExtends * Math.log(nu) + nEnds * Math.log(1 - nu);
 
+    const score = subll_total + gapll_total - subll_null - gapll_null;
+    
     return score;
 };

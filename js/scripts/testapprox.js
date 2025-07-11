@@ -13,8 +13,8 @@ const modelJson = JSON.parse (fs.readFileSync(modelFilename).toString());
 const treeStr = fs.readFileSync(treeFilename).toString();
 const alignStr = fs.readFileSync(alignFilename).toString();
 
-const ct = makeCigarTree (treeStr, alignStr);
-const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn } = expandCigarTree (ct);
+const { cigarTree } = makeCigarTree (treeStr, alignStr);
+const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn } = expandCigarTree (cigarTree);
 const lcAlignment = alignment.map ((s) => s.toLowerCase());
 
 const { alphabet, hmm, mixture } = modelJson;
@@ -27,5 +27,5 @@ const subll_total = sum (subll);
 const transll = transLogLike (transCounts, distanceToParent, hmm);
 const transll_total = sum (transll);
 
-console.log (JSON.stringify({'loglike':{'subs':subll_total,'indels':transll_total}, 'cigartree': ct}));
+console.log (JSON.stringify({'loglike':{'subs':subll_total,'indels':transll_total}, 'cigartree': cigarTree}));
 

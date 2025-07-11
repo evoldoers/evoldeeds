@@ -12,8 +12,8 @@ const [ familyId, treeFilename, alignFilename, player ] = process.argv.slice(2);
 const treeStr = fs.readFileSync(treeFilename).toString();
 const alignStr = fs.readFileSync(alignFilename).toString();
 
-const ct = makeCigarTree (treeStr, alignStr, { forceLowerCase: true, omitSeqs: true });
-console.warn(JSON.stringify(ct));
+const { cigarTree } = makeCigarTree (treeStr, alignStr, { forceLowerCase: true, omitSeqs: true });
+console.warn(JSON.stringify(cigarTree));
 
 const post = async (id, history) => {
     console.warn ("Posting to " + url + id);
@@ -31,6 +31,6 @@ const post = async (id, history) => {
       console.log (JSON.stringify(result));
 };
 
-post (familyId, ct);
+post (familyId, cigarTree);
 
 

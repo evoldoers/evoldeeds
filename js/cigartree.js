@@ -150,9 +150,6 @@ export const countGapSizes = (expandedCigar) => {
                 nInsertions = nDeletions = 0;
                 startState = 1;  // M
             }
-            const state = stateIndex(c);
-            transCounts[prev][state]++;
-            prev = state;
         }
         endState = 4;  // E
         countGapSize();
@@ -290,11 +287,16 @@ const compressCigarString = (stateStr) => {
     return cigar.join('');
 };
 
+const defaultOpts = { forceLowerCase: true, gapChar: '-', omitSeqs: false };
 export const makeCigarTree = (newickStr, fastaStr, opts = {}) => {
-    const { forceLowerCase, gapChar, omitSeqs } = { forceLowerCase: false, gapChar: '-', omitSeqs: false, ...opts };
+    const { forceLowerCase, gapChar, omitSeqs } = { ...defaultOpts, ...opts };
     const { parentIndex, distanceToParent, nodeName } = parseNewick (newickStr);
-    const { seqByName } = parseFasta (fastaStr, true, forceLowerCase);
-    let seqs = orderAlignmentSeqs (seqByName, nodeName);
+    const { seqByName: gappedSeqByName } = parseFasta (fastaStr, true, forceLowerCase);
+    const seqByName = {};
+    Object.keys(gappedSeqByName).forEach ((id) => {
+        seqByName[id] = gappedSeqByName[id].replaceAll(gapChar,'');
+    });
+    let seqs = orderAlignmentSeqs (gappedSeqByName, nodeName);
     seqs = addPathsToMRCAs (seqs, parentIndex, gapChar);
     const expandedCigars = getExpandedCigarsFromAlignment (seqs, parentIndex, gapChar);
     const cigars = expandedCigars.map (compressCigarString);
@@ -307,11 +309,12 @@ export const makeCigarTree = (newickStr, fastaStr, opts = {}) => {
         if (n > 0)
             node['distance'] = distanceToParent[n];
         node['cigar'] = cigars[n];
-        if (!omitSeqs && id && id in seqByName)
-            node['seq'] = seqByName[id].replaceAll(gapChar,'');
+        if (!omitSeqs && id && id in gappedSeqByName)
+            node['seq'] = seqByName[id];
         if (children[n].length > 0)
             node['child'] = children[n].map(makeNode);
         return node;
     };
-    return makeNode(0);
+    const cigarTree = makeNode(0);
+    return { cigarTree, seqByName };
 };

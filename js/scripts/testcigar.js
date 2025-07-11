@@ -1,7 +1,7 @@
 
 import fs from 'fs';
-import { makeCigarTree, expandCigarTree, countGapSizes } from '../cigartree.js';
-import { parseHistorianParams, subLogLike, gapLogLike, sum } from '../likelihood.js';
+import { makeCigarTree } from '../cigartree.js';
+import { historyScore } from '../likelihood.js';
 
 if (process.argv.length != 5) {
     console.error('Usage: ' + process.argv[1] + ' model.json tree.nh align.fa');
@@ -13,19 +13,9 @@ const modelJson = JSON.parse (fs.readFileSync(modelFilename).toString());
 const treeStr = fs.readFileSync(treeFilename).toString();
 const alignStr = fs.readFileSync(alignFilename).toString();
 
-const ct = makeCigarTree (treeStr, alignStr);
-const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn } = expandCigarTree (ct);
-const lcAlignment = alignment.map ((s) => s.toLowerCase());
+const { cigarTree, seqByName } = makeCigarTree (treeStr, alignStr, { omitSeqs: true });
 
-const { alphabet, substParams, indelParams } = parseHistorianParams (modelJson);
-const gapSizeCounts = countGapSizes (expandedCigar);
+const score = historyScore (cigarTree, seqByName, modelJson);
 
-const { subRate, rootProb } = substParams;
-const subll = subLogLike (lcAlignment, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, alphabet, rootProb, { subRate });
-const subll_total = sum (subll);
-
-const transll = gapLogLike (gapSizeCounts, distanceToParent, { indelParams });
-const transll_total = sum (transll);
-
-console.log (JSON.stringify({'loglike':{'subs':subll_total,'indels':transll_total}, 'cigartree': ct}));
+console.warn (JSON.stringify({cigarTree, score}));
 
