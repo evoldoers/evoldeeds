@@ -17,5 +17,5 @@ const { cigarTree, seqByName } = makeCigarTree (treeStr, alignStr, { omitSeqs: t
 
 const score = historyScore (cigarTree, seqByName, modelJson);
 
-console.warn (JSON.stringify({cigarTree, score}));
+console.log (JSON.stringify({cigarTree, score}));
 

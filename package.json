@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-   "test": "jest"
+    "test": "jest"
   },
   "author": "",
   "license": "ISC",
@@ -13,7 +13,8 @@
     "@aws-sdk/client-dynamodb": "^3.577.0",
     "@aws-sdk/lib-dynamodb": "^3.577.0",
     "biojs-io-newick": "^1.5.0",
-    "mathjs": "^12.4.2"
+    "mathjs": "^12.4.2",
+    "node-getopt": "^0.3.2"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

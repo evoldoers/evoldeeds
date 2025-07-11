@@ -1,9 +1,10 @@
 import * as math from 'mathjs';
 import { calcTkf92EqmProbs, tkf92RootTransitionMatrix, tkf92BranchTransitionMatrix } from './tkf92.js';
 import { expandCigarTree, countGapSizes, doLeavesMatchSequences } from './cigartree.js';
+import { logHypergeom2F1, logSumExp } from './mathutil.js';
 
 // Binomial coefficient using gamma functions
-const log_binom = (x, y) => lgamma(x+1) - lgamma(y+1) - lgamma(x-y+1);
+const log_binom = (x, y) => math.lgamma(x+1) - math.lgamma(y+1) - math.lgamma(x-y+1);
 
 export const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 
@@ -35,31 +36,31 @@ const logGapProb = (nDeletions, nInsertions, transmat, startState, endState) => 
   const rowIndices = [startState, insState, delState];
   const colIndices = [endState, insState, delState];
   const [[a,b,c],[f,g,h],[p,q,r]] = rowIndices.map ((i) => colIndices.map ((j) => transmat[i][j]));
+  const z = h*q/(g*r);
+
   const log = Math.log;
-  const Ck = (k) => {
-    const logbinom = log_binom(nDeletions>k ? nDeletions-1 : k,k-1) + log_binom(nInsertions>k ? nInsertions-1 : k,k-1);  // guard against out-of-range errors
-    const log_arg = b*(nInsertions-k)*(r*f*k + h*p*(nDeletions-k)) + c*(nDeletions-k)*(g*p*k + q*f*(nInsertions-k));  // guard against log(0)
-    return Math.exp (k * log(h*q/(g*r)) + logbinom - 2*log(k) + log(log_arg>0 ? log_arg : 1));
-  };
-  return nDeletions == 0
-         ? (nInsertions == 0
-             ? log(a)
-             : log(b) + (nInsertions - 1)*log(g) + log(f))
-         : (nInsertions == 0
-             ? log(c) + (nDeletions - 1)*log(r) + log(p)
-             : (nDeletions - 1)*log(g) + (nInsertions-1)*log(r)
-              + log (b*h*p + c*q*f + sum (Array.from({length:nDeletions+nInsertions}, (_,k) => (k<nInsertions || k<nDeletions) && k<=nInsertions && k<=nDeletions ? Ck(k) : 0))));
-         };
+
+  if (nDeletions === 0) {
+    return nInsertions === 0 ? log(a) : log(b*f) + (nInsertions-1) * log(g);
+  } else if (nInsertions === 0)
+    return log(c*p) + (nDeletions-1) * log(r);
+
+  return (nInsertions-1) * log(g) + (nDeletions-1) * log(r) + logSumExp(
+              [(nInsertions > 1 ? logHypergeom2F1(1-nDeletions,2-nInsertions,2,z) + log(z*(nInsertions-1)*b*r*f) : -Infinity),
+               (logHypergeom2F1(1-nDeletions,1-nInsertions,1,z) + log (b*h*p + c*q*f)),
+               (nDeletions > 1 ? logHypergeom2F1(2-nDeletions,1-nInsertions,2,z) + log(z*(nDeletions-1)*c*g*p) : -Infinity)]);
+};
 
 // Compute the indel log-likelihood for a multiple sequence alignment
-export const gapLogLike = (gapSizeCounts, distanceToParent, ggiParams) => {
+export const logBranchAlignProbs = (gapSizeCounts, distanceToParent, ggiParams) => {
     const branchTransMatrices = makeBranchTransMatrices (distanceToParent, ggiParams);
     const loglike = branchTransMatrices.map ((transmat, i) => {
         const gapSizeCountForNode = gapSizeCounts[i] || {};
         return Object.keys(gapSizeCountForNode).reduce((sum, size, _i) => {
             const [startState, endState, nDeletions, nInsertions] = size.split(' ').map(Number);
             const n = gapSizeCountForNode[size], lp = logGapProb(nDeletions, nInsertions, transmat, startState, endState);
-            return sum + gapSizeCountForNode[size] * logGapProb(nDeletions, nInsertions, transmat, startState, endState);
+            const g = n * lp;
+            return sum + g;
         }, 0);
     });
     return loglike;
@@ -146,7 +147,7 @@ export const historyScore = (history, seqById, modelJson) => {
     const subll_total = sum (subll_by_col);
 
     const ggiParams = expectationsToGgiParams (seqlen, inslen, reslife);
-    const gapll_by_branch = gapLogLike (gapSizeCounts, distanceToParent, ggiParams);
+    const gapll_by_branch = logBranchAlignProbs (gapSizeCounts, distanceToParent, ggiParams);
     const gapll_total = sum (gapll_by_branch);
 
     // Subtract null model log likelihood

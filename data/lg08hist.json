@@ -1,8 +1,8 @@
 {
   "insrate": 0.01,
-  "delrate": 0.01,
-  "insextprob": 0.66,
-  "delextprob": 0.66,
+  "delrate": 0.011,
+  "insextprob": 0.9,
+  "delextprob": 0.908256,
   "alphabet": "arndcqeghilkmfpstwyv",
   "wildcard": "x",
   "rootprob": {
