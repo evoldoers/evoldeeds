@@ -15,7 +15,7 @@ if (opt.argv.length != 2) {
     process.exit(1);
 }
 
-const omitSeqs = opt.options.omitSeqs ?? true;
+const omitSeqs = !!opt.options.omitSeqs;
 const [treeFilename, alignFilename] = opt.argv;
 
 const treeStr = fs.readFileSync(treeFilename).toString();

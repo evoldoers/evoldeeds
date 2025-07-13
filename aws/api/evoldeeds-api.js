@@ -8,6 +8,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 
 import fs from 'fs';
+import { validateCigarTree } from '../validator.js';
 import { historyScore } from './likelihood.js';
 
 const modelFilename = 'model.json';
@@ -69,6 +70,19 @@ export const handler = async (event, context) => {
           );
         const seqById = family.Item.seqById;
         const { history, player } = JSON.parse(event.body);
+
+        const validation = validateCigarTree(history, { seqById });
+        if (!validation.valid) {
+          statusCode = 422;
+          body = {
+            message: "Invalid CIGAR tree",
+            schemaErrors: validation.schemaErrors,
+            logicErrors: validation.logicErrors,
+            consistencyErrors: validation.consistencyErrors,
+          };
+          break;
+        }
+        
         const modelJson = JSON.parse (fs.readFileSync(modelFilename).toString());
         const score = historyScore (history, seqById, { ...modelJson, hmm: undefined });  // hmm undefined forces TKF92 model
 

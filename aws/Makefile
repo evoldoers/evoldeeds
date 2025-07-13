@@ -2,6 +2,9 @@ AWS_REGION = us-east-1
 STAGING_DIR = stage
 ZIP = zip
 
+AWS_NODE_MODULES = mathjs ajv
+NODE_FILES = $(addprefix ../js/, cigartree.js likelihood.js mathutil.js tkf92.js validator.js)
+
 lambda: evoldeeds-api.lambda
 
 s3: frontend-client-test.s3.build
@@ -22,7 +25,7 @@ evoldeeds-api.zip: api/evoldeeds-api.js
 	mkdir -p $(STAGING_DIR)/node_modules
 	cp $^ $(STAGING_DIR)
 	mv $(STAGING_DIR)/$< $(STAGING_DIR)/index.mjs
-	cp ../js/cigartree.js ../js/likelihood.js ../js/mathutil.js ../js/tkf92.js ../package.json $(STAGING_DIR)
+	cp $(NODE_FILES) ../package.json $(STAGING_DIR)
 	cp ../data/lg08hist.json $(STAGING_DIR)/model.json
-	cd $(STAGING_DIR); npm install mathjs
+	cd $(STAGING_DIR); npm install $(AWS_NODE_MODULES)
 	cd $(STAGING_DIR); $(ZIP) -r ../$@ *

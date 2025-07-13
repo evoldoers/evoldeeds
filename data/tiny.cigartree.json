@@ -1,0 +1,1 @@
+{"cigar":"1I","child":[{"id":"A","distance":0.1,"cigar":"1M"},{"distance":1,"cigar":"1M","child":[{"id":"B","distance":0.2,"cigar":"1D"},{"distance":0.5,"cigar":"1M","child":[{"id":"C","distance":0.3,"cigar":"1M"},{"id":"D","distance":0.4,"cigar":"1M"}]}]}]}
