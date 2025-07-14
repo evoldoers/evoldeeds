@@ -8,8 +8,6 @@ const log_binom = (x, y) => math.lgamma(x+1) - math.lgamma(y+1) - math.lgamma(x-
 
 export const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 
-export const logsumexp = (arr) => arr.filter((x)=>x>-Infinity).reduce((a,b) => Math.max(a,b) + Math.log(1 + Math.exp(-Math.abs(a-b))),-Infinity);
-
 // Convert from expectations (mean eqm sequence length, mean insertion event length, mean lifespan of residue) to GGI params (insertion & deletion rates & extension probs)
 // We are making use of the following identities:
 //  1/inslen = 1 - insextprob
@@ -98,11 +96,11 @@ export const subLogLike = (alignment, distanceToParent, leavesByColumn, internal
         });
         internals.forEach((node) => {
             tokenIndices.forEach((i) => {
-                logF[node][i] = sum (branches[node].map((child) => logsumexp (tokenIndices.map((j) => branchLogProbMatrix[child].get([i,j]) + logF[child][j]))));
+                logF[node][i] = sum (branches[node].map((child) => logSumExp (tokenIndices.map((j) => branchLogProbMatrix[child].get([i,j]) + logF[child][j]))));
             });
         });
         const clp_lse = tokenIndices.map((i) => rootLogProb.get([i]) + logF[root][i]);
-        const clp = logsumexp (clp_lse);
+        const clp = logSumExp (clp_lse);
         return clp;
     });
     return colLogProb;
