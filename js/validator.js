@@ -162,8 +162,8 @@ export function validateCigarTree(tree, options = {}) {
     }
   }
 
-  const allErrors = [...schemaErrors, ...logicErrors, ...consistencyErrors];
-  const valid = allErrors.length === 0;
+  const errors = [...schemaErrors, ...logicErrors, ...consistencyErrors];
+  const valid = errors.length === 0;
 
   if (throwOnError && !valid) {
     throw new Error("CIGAR tree validation failed:\n" + allErrors.join("\n"));
@@ -171,7 +171,7 @@ export function validateCigarTree(tree, options = {}) {
 
   return {
     valid,
-    allErrors,
+    errors,
     schemaErrors,
     logicErrors,
     consistencyErrors

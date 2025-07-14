@@ -76,9 +76,7 @@ export const handler = async (event, context) => {
           statusCode = 422;
           body = {
             message: "Invalid CIGAR tree",
-            schemaErrors: validation.schemaErrors,
-            logicErrors: validation.logicErrors,
-            consistencyErrors: validation.consistencyErrors,
+            error: validation.errors.join("\n")
           };
           break;
         }
