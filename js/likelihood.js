@@ -1,5 +1,5 @@
 import * as math from 'mathjs';
-import { calcTkf92EqmProbs, tkf92RootTransitionMatrix, tkf92BranchTransitionMatrix } from './tkf92.js';
+import { expectationsToGgiParams, calcTkf92EqmProbs, tkf92RootTransitionMatrix, tkf92BranchTransitionMatrix } from './tkf92.js';
 import { expandCigarTree, countGapSizes, doLeavesMatchSequences } from './cigartree.js';
 import { logHypergeom2F1, logSumExp } from './mathutil.js';
 
@@ -7,21 +7,6 @@ import { logHypergeom2F1, logSumExp } from './mathutil.js';
 const log_binom = (x, y) => math.lgamma(x+1) - math.lgamma(y+1) - math.lgamma(x-y+1);
 
 export const sum = (arr) => arr.reduce((a,b) => a+b, 0);
-
-// Convert from expectations (mean eqm sequence length, mean insertion event length, mean lifespan of residue) to GGI params (insertion & deletion rates & extension probs)
-// We are making use of the following identities:
-//  1/inslen = 1 - insextprob
-//  1/seqlen = delextprob/insextprob + 1
-//  1/reslife = delrate / (1 - delextprob)
-//  insrate * delextprob * (1 - insextprob) = delrate * insextprob * (1 - delextprob)
-export const expectationsToGgiParams = (seqlen, inslen, reslife) => {
-    const insextprob = 1 - 1 / inslen;  // GGI parameter x
-    const delextprob = insextprob * (seqlen + 1) / seqlen;  // GGI parameter y
-    const delrate = (1 / reslife) * (1 - delextprob);  // GGI parameter mu_0
-    const insrate = delrate * insextprob * (1 - delextprob) / (delextprob * (1 - insextprob));   // GGI parameter lambda_0
-    return { insrate, delrate, insextprob, delextprob };
-};
-
 
 // Returns the (log of the) probability of seeing a particular size of gap,
 // by combinatorially summing over all paths with the right number of I's and D's.
