@@ -172,7 +172,7 @@ const parseNewick = (newickStr) => {
     return { parentIndex, distanceToParent, nodeName };
 };
 
-export const parseFasta = (fastaStr, requireFlush = false, forceLowerCase = false) => {
+export const parseFasta = (fastaStr, opts = { requireFlush: false, forceLowerCase: false, removeGaps: false }) => {
     const lines = fastaStr.split('\n');
     let seqByName = {}, seqNames = [], name;
     lines.forEach ((line) => {
@@ -181,12 +181,14 @@ export const parseFasta = (fastaStr, requireFlush = false, forceLowerCase = fals
             seqNames.push(name);
             seqByName[name] = '';
         } else {
-            if (forceLowerCase)
+            if (opts?.forceLowerCase)
                 line = line.toLowerCase();
+            if (opts?.removeGaps)
+                line = line.replaceAll(/[-.]/g, '');
             seqByName[name] += line;
         }
     });
-    if (requireFlush) {
+    if (opts?.requireFlush) {
         const seqLengths = Object.values(seqByName).map((s) => s.length);
         assertSame (seqLengths, "Sequences are supposed to be the same length, but are not");
     }
@@ -291,7 +293,7 @@ const defaultOpts = { forceLowerCase: true, gapChar: '-', omitSeqs: false };
 export const makeCigarTree = (newickStr, fastaStr, opts = {}) => {
     const { forceLowerCase, gapChar, omitSeqs } = { ...defaultOpts, ...opts };
     const { parentIndex, distanceToParent, nodeName } = parseNewick (newickStr);
-    const { seqByName: gappedSeqByName } = parseFasta (fastaStr, true, forceLowerCase);
+    const { seqByName: gappedSeqByName } = parseFasta (fastaStr, { requireFlush: true, forceLowerCase });
     const seqByName = {};
     Object.keys(gappedSeqByName).forEach ((id) => {
         seqByName[id] = gappedSeqByName[id].replaceAll(gapChar,'');

@@ -20,10 +20,10 @@ export const logHypergeom2F1 = (a, b, c, z) => {
   let sum = [pow + poch_a + poch_b - poch_c - k_factorial]; // Initial term for k=0
   
   for (let k = 1; k <= max_k; k++) {
-    poch_a += Repro.log(1 - a - k);
-    poch_b += Repro.log(1 - k - b);
-    poch_c += Repro.log(c + k - 1);
-    k_factorial += Repro.log(k);
+    poch_a += Math.log(1 - a - k);
+    poch_b += Math.log(1 - k - b);
+    poch_c += Math.log(c + k - 1);
+    k_factorial += Math.log(k);
     pow += log_z;
     sum.push (pow + poch_a + poch_b - poch_c - k_factorial); // Add term for current k
   }

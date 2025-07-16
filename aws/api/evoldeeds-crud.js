@@ -8,10 +8,11 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 
 import fs from 'fs';
-import { validateCigarTree } from '../validator.js';
+import { validateCigarTree } from './validator.js';
 import { historyScore } from './likelihood.js';
 
 const modelFilename = 'model.json';
+const defaultPlayer = 'anonymous';
 
 const client = new DynamoDBClient({});
 
@@ -38,6 +39,15 @@ export const handler = async (event, context) => {
             },
           })
         );
+        
+        if (!body.Item) {
+          statusCode = 404;
+          body = {
+            message: `Family with id '${event.pathParameters.id}' not found`
+          };
+          break;
+        }
+        
         body = body.Item;
         break;
       case "GET /families":
@@ -56,6 +66,15 @@ export const handler = async (event, context) => {
             },
           })
         );
+        
+        if (!body.Item) {
+          statusCode = 404;
+          body = {
+            message: `History record for family '${event.pathParameters.id}' with date '${event.pathParameters.date}' not found`
+          };
+          break;
+        }
+        
         body = body.Item;
         break;
       case "POST /histories/{id}":
@@ -68,6 +87,15 @@ export const handler = async (event, context) => {
               },
             })
           );
+        
+        if (!family.Item) {
+          statusCode = 404;
+          body = {
+            message: `Family with id '${family_id}' not found`
+          };
+          break;
+        }
+        
         const seqById = family.Item.seqById;
         const { history, player } = JSON.parse(event.body);
 
@@ -82,7 +110,7 @@ export const handler = async (event, context) => {
         }
         
         const modelJson = JSON.parse (fs.readFileSync(modelFilename).toString());
-        const score = historyScore (history, seqById, { ...modelJson, hmm: undefined });  // hmm undefined forces TKF92 model
+        const score = historyScore (history, seqById, modelJson);
 
         const created = Date.now();
         await dynamo.send(
@@ -92,7 +120,7 @@ export const handler = async (event, context) => {
               family_id,
               created,
               history,
-              player,
+              player: player || defaultPlayer,
               score
             },
             ConditionExpression: 'attribute_not_exists(family_id)'
@@ -108,7 +136,7 @@ export const handler = async (event, context) => {
                     Item: {
                         ...family.Item,
                         history: { created },
-                        player,
+                        player: player || defaultPlayer,
                         score
                     },
                     ConditionExpression: 'attribute_not_exists(#score) OR #score < :newScore',

@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { makeCigarTree } from '../cigartree.js';
+import { makeCigarTree } from '../../js/cigartree.js';
 
 if (process.argv.length < 5) {
     console.error('Usage: ' + process.argv[1] + ' family_id tree.nh align.fa [player]');
@@ -13,7 +13,6 @@ const treeStr = fs.readFileSync(treeFilename).toString();
 const alignStr = fs.readFileSync(alignFilename).toString();
 
 const { cigarTree } = makeCigarTree (treeStr, alignStr, { forceLowerCase: true, omitSeqs: true });
-console.warn(JSON.stringify(cigarTree));
 
 const post = async (id, history) => {
     console.warn ("Posting to " + url + id);
