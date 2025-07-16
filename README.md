@@ -6,11 +6,9 @@ of proteins, as well as the beginnings of a gamification
 framework for crowdsourced phylogenetics.
 
 The underlying probabilistic models for sequence evolution are
-[continuous-time Markov chains](https://en.wikipedia.org/wiki/Continuous-time_Markov_chain) for substitutions,
-[hidden Markov models](https://web.stanford.edu/class/cs262/archives/notes/lecture8.pdf) for indels,
-[Potts models](https://tianyu-lu.github.io/communication/protein/ml/2021/04/09/Potts-Model-Visualized.html) for interactions between amino acids,
-and [continuous-time Bayes networks](https://arxiv.org/abs/1301.0591)
-(CTBNs) for covariant substitution processes.
+[continuous-time Markov chains](https://en.wikipedia.org/wiki/Continuous-time_Markov_chain) for substitutions and
+[hidden Markov models](https://web.stanford.edu/class/cs262/archives/notes/lecture8.pdf)
+(specifically the [TKF92 model](https://pubmed.ncbi.nlm.nih.gov/1556741/)) for indels.
 
 
 ## JavaScript
