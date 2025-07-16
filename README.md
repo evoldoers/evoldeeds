@@ -37,12 +37,12 @@ and users can then post their solutions to the problem of reconstructing the
 most likely evolutionary history explaining that dataset,
 using the above probabilistic models as a scoring scheme.
 
-## How to work with the AWS database
+## How to work with the AWS database (site administrators)
 
 - Go to `https://api.evoldeeds.com/families` to get a list of families.
 - Go to `https://api.evoldeeds.com/families/{family_id}` to get the info for a particular family (e.g. https://api.evoldeeds.com/families/test). Info includes sequences, current best score, and `created` date for current best-scoring history.
 - Go to `https://api.evoldeeds.com/histories/{family_id}/{created}` to get a particular history (e.g. https://api.evoldeeds.com/histories/test/1716233572356)
-- Use the node scripts in `aws/scripts` to create, delete, or post histories for a family.
+- Use the node scripts in `aws/scripts` to create, delete, or post histories for a family. You will need to set the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables as described [here](https://docs.aws.amazon.com/cli/v1/userguide/cli-configure-envvars.html). Ask Ian for these keys
 
 
 ## Front-end client
