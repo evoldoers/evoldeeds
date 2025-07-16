@@ -27,6 +27,15 @@ The JavaScript code also includes a JSON data structure (Cigar Tree) that compac
 
 The `data/` subdirectory contains a few test alignments and parameters.
 
+## Scripts
+
+There are JavaScript and Python scripts in several places:
+- `aws/scripts` ... scripts for interacting with the back-end
+- `data/scripts` ... data download and preprocessing scripts for working with TreeFam etc.
+- `js/scripts` ... scripts for working with trees, alignments, and the Cigar Tree format
+
+Try e.g. `node js/scripts/calcscore.js data/lg08evol.json data/gp120.nh data/gp120.aligned.fa` to compute the score of a reconstruction of HIV's gp120 envelope domain.
+
 ## AWS Lambda code
 
 The `aws/` subdirectory contains code implementing a REST API
