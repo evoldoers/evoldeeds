@@ -17,6 +17,8 @@ export const cigarTreeSchema = {
     },
     child: {
       type: "array",
+      minItems: 2,
+      maxItems: 2,
       items: { $ref: "#" }
     }
   },
