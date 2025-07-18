@@ -9,7 +9,7 @@ export const cigarTreeSchema = {
     id: { type: "string" },
     cigar: {
       type: "string",
-      pattern: "^([0-9]+[MID])+$"
+      pattern: "^([0-9]+[MID])*$"
     },
     distance: {
       type: "number",
