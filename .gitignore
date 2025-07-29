@@ -5,3 +5,5 @@ aws/*.s3
 aws/*.zip
 aws/stage
 venv/*
+bug
+bug/*

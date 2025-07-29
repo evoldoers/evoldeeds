@@ -172,7 +172,7 @@ const parseNewick = (newickStr) => {
     return { parentIndex, distanceToParent, nodeName };
 };
 
-export const parseFasta = (fastaStr, opts = { requireFlush: false, forceLowerCase: false, removeGaps: false }) => {
+export const parseFasta = (fastaStr, opts = { requireFlush: false, forceLowerCase: false, removeGaps: false, alphabet: undefined }) => {
     const lines = fastaStr.split('\n');
     let seqByName = {}, seqNames = [], name;
     lines.forEach ((line) => {
@@ -190,7 +190,18 @@ export const parseFasta = (fastaStr, opts = { requireFlush: false, forceLowerCas
     });
     if (opts?.requireFlush) {
         const seqLengths = Object.values(seqByName).map((s) => s.length);
-        assertSame (seqLengths, "Sequences are supposed to be the same length, but are not");
+        assertSame (seqLengths, "Rows in an alignment are supposed to be the same length, but these sequences have different lengths");
+    }
+    if (opts?.alphabet) {
+        const alphabet = forceLowerCase ? opts.alphabet.toLowerCase() : opts.alphabet;
+        Object.keys(seqByName).forEach((id) => {
+            const seq = seqByName[id];
+            for (const c of seq) {
+                if (!alphabet.includes(c)) {
+                    throw new Error(`Sequence '${id}' contains character '${c}' not in alphabet '${alphabet}'`);
+                }
+            }
+        });
     }
     return { seqNames, seqByName };
 };
