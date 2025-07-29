@@ -193,7 +193,7 @@ export const parseFasta = (fastaStr, opts = { requireFlush: false, forceLowerCas
         assertSame (seqLengths, "Rows in an alignment are supposed to be the same length, but these sequences have different lengths");
     }
     if (opts?.alphabet) {
-        const alphabet = forceLowerCase ? opts.alphabet.toLowerCase() : opts.alphabet;
+        const alphabet = (opts?.forceLowerCase && opts.alphabet?.toLowerCase()) || opts.alphabet;
         Object.keys(seqByName).forEach((id) => {
             const seq = seqByName[id];
             for (const c of seq) {
