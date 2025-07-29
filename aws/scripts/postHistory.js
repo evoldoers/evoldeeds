@@ -16,6 +16,7 @@ const { cigarTree } = makeCigarTree (treeStr, alignStr, { forceLowerCase: true, 
 
 const post = async (id, history) => {
     console.warn ("Posting to " + url + id);
+    console.warn(JSON.stringify({history}));
     const response = await fetch(url + id, {
         method: "POST",
         // mode: "cors",

@@ -13,7 +13,10 @@ const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 // Expand a history tree to a multiple alignment and a tree
 const cigarRegex = /^(\d+[MID])*$/;
 const cigarGroupRegex = /(\d+)([MID])/g;
-export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') => {
+const canonicalGapChar = '-';
+const canonicalWildChar = '*';
+const allGapChars = '-.';
+export const expandCigarTree = (rootNode, seqById, gap = canonicalGapChar, wildcard = canonicalWildChar) => {
     // Build a list of nodes in preorder
     let nodeList = [], parentIndex = [], childIndex = [], distanceToParent = [], nodeById = {};
     const visitSubtree = (node, pi) => {
@@ -172,7 +175,9 @@ const parseNewick = (newickStr) => {
     return { parentIndex, distanceToParent, nodeName };
 };
 
-export const parseFasta = (fastaStr, opts = { requireFlush: false, forceLowerCase: false, removeGaps: false, alphabet: undefined }) => {
+const defaultParseFastaOpts = { requireFlush: false, forceLowerCase: false, removeGaps: false, alphabet: undefined };
+export const parseFasta = (fastaStr, opts = {}) => {
+    opts = { ...defaultParseFastaOpts, ...opts };
     const lines = fastaStr.split('\n');
     let seqByName = {}, seqNames = [], name;
     lines.forEach ((line) => {
@@ -183,8 +188,7 @@ export const parseFasta = (fastaStr, opts = { requireFlush: false, forceLowerCas
         } else {
             if (opts?.forceLowerCase)
                 line = line.toLowerCase();
-            if (opts?.removeGaps)
-                line = line.replaceAll(/[-.]/g, '');
+            line = line.replaceAll(new RegExp(`[${allGapChars}]`,'g'), opts?.removeGaps ? '' : canonicalGapChar);
             seqByName[name] += line;
         }
     });
@@ -300,9 +304,9 @@ const compressCigarString = (stateStr) => {
     return cigar.join('');
 };
 
-const defaultOpts = { forceLowerCase: true, gapChar: '-', omitSeqs: false };
+const defaultMakeCigarTreeOpts = { forceLowerCase: true, gapChar: '-', omitSeqs: false };
 export const makeCigarTree = (newickStr, fastaStr, opts = {}) => {
-    const { forceLowerCase, gapChar, omitSeqs } = { ...defaultOpts, ...opts };
+    const { forceLowerCase, gapChar, omitSeqs } = { ...defaultMakeCigarTreeOpts, ...opts };
     const { parentIndex, distanceToParent, nodeName } = parseNewick (newickStr);
     const { seqByName: gappedSeqByName } = parseFasta (fastaStr, { requireFlush: true, forceLowerCase });
     const seqByName = {};
