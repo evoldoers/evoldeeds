@@ -70,6 +70,16 @@ function traverseTree(node, expectedParentLen, {
     errors.push(`Length mismatch at node ${label}: expected parent length ${expectedParentLen}, got ${parentLen}`);
   }
 
+      // Rule: Zero-length branches cannot contain indels or mismatches
+  if (node.distance === 0) {
+    console.log("DISTANCE HERE IS ZERO")
+    const ops = expandCigar(node.cigar);
+    const hasIndel = ops.some(([_, op]) => op === "I" || op === "D" || op === "X");
+    if (hasIndel) {
+      errors.push(`Node at ${path} has zero-length branch but contains indels in CIGAR: '${node.cigar}'`);
+    }
+  } 
+
   const isLeaf = !node.child || node.child.length === 0;
 
   // Rule: distance required on all but root
