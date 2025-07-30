@@ -112,6 +112,10 @@ export const handler = async (event, context) => {
         const modelJson = JSON.parse (fs.readFileSync(modelFilename).toString());
         const score = historyScore (history, seqById, modelJson);
 
+        if (!Number.isFinite(score)) {
+          throw new Error(`Invalid score: ${score}. History rejected because score is not finite.`);
+        }
+
         const created = Date.now();
         await dynamo.send(
           new PutCommand({
