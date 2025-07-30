@@ -5,10 +5,15 @@ various algorithms for computing the likelihoods of phylogenetic alignments
 of proteins, as well as the beginnings of a gamification
 framework for crowdsourced phylogenetics.
 
-The underlying probabilistic models for sequence evolution are
+Admins post _domains_: curated sets of amino acid sequences, representing protein domain families.
+Players claim the _deed_ for a domain by posting the most plausible _history_ i.e. an evolutionary tree and multiple sequence alignment
+)including ancestral sequence reconstruction to the level of wildcards - i.e. alignments to ancestral sequences are required, but not the ancestral sequences themselves).
+
+Histories are scored using a consistent stochastic model for molecular evolution.
+The underlying probabilistic models are
 [continuous-time Markov chains](https://en.wikipedia.org/wiki/Continuous-time_Markov_chain) for substitutions and
 [hidden Markov models](https://web.stanford.edu/class/cs262/archives/notes/lecture8.pdf)
-(specifically the [TKF92 model](https://pubmed.ncbi.nlm.nih.gov/1556741/)) for indels.
+(specifically the [Thorne, Kishino & Felsenstein (1992) model](https://pubmed.ncbi.nlm.nih.gov/1556741/)) for indels.
 
 
 ## JavaScript
