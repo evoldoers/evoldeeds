@@ -1,9 +1,6 @@
 # EvolDeeds
 
-This repository contains JavaScript implementations of
-various algorithms for computing the likelihoods of phylogenetic alignments
-of proteins, as well as the beginnings of a gamification
-framework for crowdsourced phylogenetics.
+Evol Deeds is a game of crowdsourced phylogenetics.
 
 - Admins post domains: curated sets of amino acid sequences, representing protein domain families.
 - Players claim the _deed_ for a family by posting the most likely evolutionary explanation for it.
