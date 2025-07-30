@@ -118,11 +118,13 @@ export const expandCigarTree = (rootNode, seqById, gap = canonicalGapChar, wildc
 // Verify that there is a one-to-one mapping between leaf nodes and sequences in a separate sequence dataset.
 // Also check that no nodes specify their own sequences.
 export const doLeavesMatchSequences = (expandedHistory, seqById) => {
-    if (expandedHistory.nodeList.some(node => 'seq' in node))
+    if (expandedHistory.nodeList.some(node => 'seq' in node)) {
         return false;
+    }
     const leafNodes = expandedHistory.nodeList.filter(node => !node.child);
-    if (leafNodes.some(node => !('id' in node)))
+    if (leafNodes.some(node => !('id' in node))) {
         return false;
+    }
     const leafIds = new Set(leafNodes.map(node => node.id));
     const seqIds = new Set(Object.keys(seqById));
     const missingSeqs = Array.from(leafIds).filter(id => !seqIds.has(id));
@@ -334,4 +336,18 @@ export const makeCigarTree = (newickStr, fastaStr, opts = {}) => {
     };
     const cigarTree = makeNode(0);
     return { cigarTree, seqByName };
+};
+
+export const getSeqByName = (cigarTree) => {
+    const seqByName = {};
+    const traverse = (node) => {
+        if ('id' in node && 'seq' in node) {
+            seqByName[node.id] = node.seq;
+        }
+        if (node.child) {
+            node.child.forEach(traverse);
+        }
+    };
+    traverse(cigarTree);
+    return seqByName;
 };
