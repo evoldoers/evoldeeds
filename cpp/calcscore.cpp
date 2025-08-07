@@ -113,7 +113,6 @@ static int buildTreeFromJson(const sajson::value& v, int parent,
         sajson::value cv = v.get_object_value(idx);
         if (cv.get_type()!=sajson::TYPE_STRING) die("cigar must be string");
         node.cigar.assign(cv.as_string());
-        if (node.cigar.empty()) die("cigar is empty");
     } else {
         die("cigar is missing");
     }
@@ -148,7 +147,6 @@ static int buildTreeFromJson(const sajson::value& v, int parent,
         }
     }
 
-    if (nodes[idxSelf].cigar.empty()) die("Missing CIGAR on a node");
     return idxSelf;
 }
 
