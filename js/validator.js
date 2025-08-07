@@ -11,7 +11,7 @@ export const cigarTreeSchema = {
     id: { type: "string" },
     cigar: {
       type: "string",
-      pattern: "^([0-9]+[MID])+$"
+      pattern: "^([0-9]+[MID])*$"
     },
     distance: {
       type: "number",
@@ -19,6 +19,8 @@ export const cigarTreeSchema = {
     },
     child: {
       type: "array",
+      minItems: 2,
+      maxItems: 2,
       items: { $ref: "#" }
     }
   },

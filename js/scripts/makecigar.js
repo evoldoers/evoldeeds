@@ -11,6 +11,12 @@ const getopt = new Getopt([
 getopt.setHelp(`\nUsage: ${path.basename(process.argv[1])} [options] tree.nh align.fa\n\nOptions:\n[[OPTIONS]]\n`);
 
 const opt = getopt.parse(process.argv.slice(2));
+
+if (opt.options.help) {
+    getopt.showHelp();
+    process.exit(0);
+}
+
 if (opt.argv.length != 2) {
     getopt.showHelp();
     process.exit(1);

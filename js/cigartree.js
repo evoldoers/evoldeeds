@@ -13,7 +13,10 @@ const sum = (arr) => arr.reduce((a,b) => a+b, 0);
 // Expand a history tree to a multiple alignment and a tree
 const cigarRegex = /^(\d+[MID])*$/;
 const cigarGroupRegex = /(\d+)([MID])/g;
-export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') => {
+const canonicalGapChar = '-';
+const canonicalWildChar = '*';
+const allGapChars = '-.';
+export const expandCigarTree = (rootNode, seqById, gap = canonicalGapChar, wildcard = canonicalWildChar) => {
     // Build a list of nodes in preorder
     let nodeList = [], parentIndex = [], childIndex = [], distanceToParent = [], nodeById = {}, seqList = [];
     const getSequence = (node) => (seqById && 'id' in node) ? seqById[node.id] : node.seq;
@@ -121,11 +124,13 @@ export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') =>
 // Verify that there is a one-to-one mapping between leaf nodes and sequences in a separate sequence dataset.
 // Also check that no nodes specify their own sequences.
 export const doLeavesMatchSequences = (expandedHistory, seqById) => {
-    if (expandedHistory.nodeList.some(node => 'seq' in node))
+    if (expandedHistory.nodeList.some(node => 'seq' in node)) {
         return false;
+    }
     const leafNodes = expandedHistory.nodeList.filter(node => !node.child);
-    if (leafNodes.some(node => !('id' in node)))
+    if (leafNodes.some(node => !('id' in node))) {
         return false;
+    }
     const leafIds = new Set(leafNodes.map(node => node.id));
     const seqIds = new Set(Object.keys(seqById));
     const missingSeqs = Array.from(leafIds).filter(id => !seqIds.has(id));
@@ -178,7 +183,9 @@ const parseNewick = (newickStr) => {
     return { parentIndex, distanceToParent, nodeName };
 };
 
-export const parseFasta = (fastaStr, opts = { requireFlush: false, forceLowerCase: false, removeGaps: false }) => {
+const defaultParseFastaOpts = { requireFlush: false, forceLowerCase: false, removeGaps: false, alphabet: undefined };
+export const parseFasta = (fastaStr, opts = {}) => {
+    opts = { ...defaultParseFastaOpts, ...opts };
     const lines = fastaStr.split('\n');
     let seqByName = {}, seqNames = [], name;
     lines.forEach ((line) => {
@@ -189,14 +196,24 @@ export const parseFasta = (fastaStr, opts = { requireFlush: false, forceLowerCas
         } else {
             if (opts?.forceLowerCase)
                 line = line.toLowerCase();
-            if (opts?.removeGaps)
-                line = line.replaceAll(/[-.]/g, '');
+            line = line.replaceAll(new RegExp(`[${allGapChars}]`,'g'), opts?.removeGaps ? '' : canonicalGapChar);
             seqByName[name] += line;
         }
     });
     if (opts?.requireFlush) {
         const seqLengths = Object.values(seqByName).map((s) => s.length);
-        assertSame (seqLengths, "Sequences are supposed to be the same length, but are not");
+        assertSame (seqLengths, "Rows in an alignment are supposed to be the same length, but these sequences have different lengths");
+    }
+    if (opts?.alphabet) {
+        const alphabet = (opts?.forceLowerCase && opts.alphabet?.toLowerCase()) || opts.alphabet;
+        Object.keys(seqByName).forEach((id) => {
+            const seq = seqByName[id];
+            for (const c of seq) {
+                if (!alphabet.includes(c)) {
+                    throw new Error(`Sequence '${id}' contains character '${c}' not in alphabet '${alphabet}'`);
+                }
+            }
+        });
     }
     return { seqNames, seqByName };
 };
@@ -295,9 +312,9 @@ const compressCigarString = (stateStr) => {
     return cigar.join('');
 };
 
-const defaultOpts = { forceLowerCase: true, gapChar: '-', omitSeqs: false };
+const defaultMakeCigarTreeOpts = { forceLowerCase: true, gapChar: '-', omitSeqs: false };
 export const makeCigarTree = (newickStr, fastaStr, opts = {}) => {
-    const { forceLowerCase, gapChar, omitSeqs } = { ...defaultOpts, ...opts };
+    const { forceLowerCase, gapChar, omitSeqs } = { ...defaultMakeCigarTreeOpts, ...opts };
     const { parentIndex, distanceToParent, nodeName } = parseNewick (newickStr);
     const { seqByName: gappedSeqByName } = parseFasta (fastaStr, { requireFlush: true, forceLowerCase });
     const seqByName = {};
@@ -325,4 +342,18 @@ export const makeCigarTree = (newickStr, fastaStr, opts = {}) => {
     };
     const cigarTree = makeNode(0);
     return { cigarTree, seqByName };
+};
+
+export const getSeqByName = (cigarTree) => {
+    const seqByName = {};
+    const traverse = (node) => {
+        if ('id' in node && 'seq' in node) {
+            seqByName[node.id] = node.seq;
+        }
+        if (node.child) {
+            node.child.forEach(traverse);
+        }
+    };
+    traverse(cigarTree);
+    return seqByName;
 };

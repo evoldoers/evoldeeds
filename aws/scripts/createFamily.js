@@ -12,9 +12,15 @@ const awsDefaultRegion = 'us-east-1';
 const client = new DynamoDBClient({ region: process.env.AWS_DEFAULT_REGION || awsDefaultRegion });
 const dynamo = DynamoDBDocumentClient.from(client);
 
+const proteinAlphabet = 'acdefghiklmnpqrstvwy';
+const dnaAlphabet = 'acgt';
+
 // Set up command line options
 const getopt = new Getopt([
     ['k', 'keepcase', 'Keep original case of sequences (default: false)'],
+    ['a', 'alphabet', `Specify sequence alphabet (default: '${proteinAlphabet}')`],
+    ['d', 'dna', 'Use DNA alphabet (default: false)'],
+    ['n', 'any', 'Allow sequences that do not match alphabet (default: false)'],
     ['h', 'help', 'Display this help']
 ]).setHelp(
     'Usage: ' + process.argv[1] + ' [options] id seqs.fa\n' +
@@ -29,6 +35,13 @@ if (opt.options.help) {
     process.exit(0);
 }
 
+if ((opt.options.dna && opt.options.alphabet) || (opt.options.any && (opt.options.dna || opt.options.alphabet))) {
+    console.error('Cannot use --dna, --alphabet, or --any together');
+    console.log(getopt.getHelp());
+    process.exit(0);
+}
+const alphabet = opt.options.dna ? dnaAlphabet : (opt.options.any ? undefined : (opt.options.alphabet || proteinAlphabet));;
+
 if (opt.argv.length != 2) {
     console.error(getopt.getHelp());
     process.exit(1);
@@ -38,7 +51,7 @@ const familyTableName = "evoldeeds-families";
 
 const [ familyId, seqFilename ] = opt.argv;
 const seqFile = fs.readFileSync(seqFilename).toString();
-const { seqByName } = parseFasta (seqFile, { forceLowerCase: !opt.options.keepcase, removeGaps: true });
+const { seqByName } = parseFasta (seqFile, { forceLowerCase: !opt.options.keepcase, removeGaps: true, alphabet });
 
 const create = async (id, seqById) => {
     try {
