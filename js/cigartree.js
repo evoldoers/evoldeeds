@@ -15,7 +15,8 @@ const cigarRegex = /^(\d+[MID])*$/;
 const cigarGroupRegex = /(\d+)([MID])/g;
 export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') => {
     // Build a list of nodes in preorder
-    let nodeList = [], parentIndex = [], childIndex = [], distanceToParent = [], nodeById = {};
+    let nodeList = [], parentIndex = [], childIndex = [], distanceToParent = [], nodeById = {}, seqList = [];
+    const getSequence = (node) => (seqById && 'id' in node) ? seqById[node.id] : node.seq;
     const visitSubtree = (node, pi) => {
         const nodeIndex = nodeList.length;
         if ('id' in node) {
@@ -29,6 +30,12 @@ export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') =>
         childIndex.push([]);
         if (node.child)
             childIndex[nodeIndex] = node.child.map((child) => visitSubtree(child,nodeIndex));
+        else {
+            const sequence = getSequence(node);
+            if (typeof(sequence) === 'string') {
+                seqList.push(sequence);
+            }
+        }
         return nodeIndex;
     }
     visitSubtree(rootNode,undefined);
@@ -50,7 +57,6 @@ export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') =>
     let alignment = nodeList.map(node => '');
     let leavesByColumn = [], internalsByColumn = [], rootByColumn = [], branchesByColumn = [];
     let nColumns = 0;
-    const getSequence = (node) => (seqById && 'id' in node) ? seqById[node.id] : node.seq;
     const advanceCursor = (row, leaves, internals, branches, isDelete) => {
         nextCigarPos[row]++;
         if (!isDelete) {
@@ -109,7 +115,7 @@ export const expandCigarTree = (rootNode, seqById, gap = '-', wildcard = '*') =>
     if (badSeqRow >= 0)
         throw new Error("Sequence not fully accounted for in node " + nodeName(badCigarRow) + " (position " + nextSeqPos[badSeqRow] + " of " + getSequence(nodeList[badSeqRow]) + ")");
     // return
-    return {alignment, gap, wildcard, expandedCigar, nRows, nColumns, leavesByColumn, internalsByColumn, branchesByColumn, rootByColumn, nodeList, parentIndex, distanceToParent, childIndex, nodeById};
+    return {alignment, gap, wildcard, expandedCigar, nRows, nColumns, leavesByColumn, internalsByColumn, branchesByColumn, rootByColumn, nodeList, parentIndex, distanceToParent, childIndex, nodeById, seqList};
 };
 
 // Verify that there is a one-to-one mapping between leaf nodes and sequences in a separate sequence dataset.

@@ -4,8 +4,9 @@ import { makeCigarTree } from '../cigartree.js';
 import Getopt from 'node-getopt';
 
 const getopt = new Getopt([
-    ['o', 'omitSeqs', 'Omit leaf node sequences from output'],
-]);
+    ['n', 'noseq', 'Omit leaf node sequences from output'],
+    ['h', 'help', 'display this help'],
+]).bindHelp();
 
 getopt.setHelp(`\nUsage: ${path.basename(process.argv[1])} [options] tree.nh align.fa\n\nOptions:\n[[OPTIONS]]\n`);
 
@@ -15,7 +16,7 @@ if (opt.argv.length != 2) {
     process.exit(1);
 }
 
-const omitSeqs = !!opt.options.omitSeqs;
+const omitSeqs = !!opt.options.noseq;
 const [treeFilename, alignFilename] = opt.argv;
 
 const treeStr = fs.readFileSync(treeFilename).toString();

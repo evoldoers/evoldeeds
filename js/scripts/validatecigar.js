@@ -26,6 +26,7 @@ function parseFasta(text) {
 // Define options
 const getopt = new Getopt([
   ['f', 'fasta=FILE', 'FASTA file of sequences to validate against leaf nodes'],
+  ['s', 'sequence', 'CIGAR tree is decorated with sequences at leaves (FASTA file not required)'],
   ['h', 'help', 'display this help']
 ]).bindHelp();
 
@@ -48,7 +49,7 @@ try {
     seqById = parseFasta(fastaText);
   }
 
-  const result = validateCigarTree(tree, { throwOnError: false, seqById });
+  const result = validateCigarTree(tree, { throwOnError: false, seqById, seqDecorated: opt.options.sequence });
 
   if (result.valid) {
     console.log("✅ CIGAR tree is valid.");

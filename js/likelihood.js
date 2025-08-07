@@ -117,10 +117,10 @@ const makeBranchTransMatrices = (distanceToParent, ggiParams) => {
 
 export const historyScore = (history, seqById, modelJson) => {
     const expandedHistory = expandCigarTree (history, seqById);
-    if (!doLeavesMatchSequences (expandedHistory, seqById))
+    if (seqById && !doLeavesMatchSequences (expandedHistory, seqById))
         throw new Error ("History does not match sequences");
 
-    const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn } = expandedHistory;
+    const { alignment, expandedCigar, distanceToParent, leavesByColumn, internalsByColumn, branchesByColumn, seqList } = expandedHistory;
     const gapSizeCounts = countGapSizes (expandedCigar);
 
     const { alphabet, seqlen, inslen, reslife, evecs_l, evals, evecs_r, root } = modelJson;
@@ -136,7 +136,7 @@ export const historyScore = (history, seqById, modelJson) => {
     // Subtract null model log likelihood
     const tokens = alphabet.split('');
     let nRes = Object.fromEntries (tokens.map((c) => [c,0])), nStarts = 0, nEnds = 0, nExtends = 0, nEmpties = 0;
-    Object.values(seqById).forEach ((seq) => {
+    seqList.forEach ((seq) => {
         seq.split('').forEach((c) => ++nRes[c]);
         if (seq.length > 0) {
             ++nStarts;
