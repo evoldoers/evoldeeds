@@ -7,3 +7,5 @@ aws/stage
 venv/*
 bug
 bug/*
+
+cpp/calcscore
