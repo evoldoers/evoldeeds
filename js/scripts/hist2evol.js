@@ -1,3 +1,7 @@
+// Script to convert Historian-format model parameters to EvolDeeds format.
+// Includes pre-diagonalization of substitution model, and specification of indel model parameters in terms of expectations
+// (mean sequence length, mean insertion event length, mean lifespan of a residue).
+
 import * as math from 'mathjs';
 import fs from 'fs';
 
