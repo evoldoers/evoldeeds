@@ -4,6 +4,7 @@ import { makeCigarTree } from '../cigartree.js';
 import Getopt from 'node-getopt';
 
 const getopt = new Getopt([
+    ['p', 'params=FILE', 'Include model parameter file'],
     ['n', 'noseq', 'Omit leaf node sequences from output'],
     ['h', 'help', 'display this help'],
 ]).bindHelp();
@@ -30,5 +31,7 @@ const alignStr = fs.readFileSync(alignFilename).toString();
 
 const { cigarTree, seqByName } = makeCigarTree(treeStr, alignStr, { omitSeqs });
 
-console.log(JSON.stringify(cigarTree));
+let result = opt.options.params ? { cigartree: cigarTree, params: JSON.parse(fs.readFileSync(opt.options.params).toString()) } : cigarTree;
+
+console.log(JSON.stringify(result));
 
