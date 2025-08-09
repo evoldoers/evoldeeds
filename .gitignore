@@ -9,3 +9,19 @@ bug
 bug/*
 
 cpp/calcscore
+
+# Cargo build output
+rust/target/
+
+# Rust/Cargo metadata files
+rust/**/*.rs.bk
+
+# If you use Rustfmt's backup files
+rust/**/*.rs.bk
+
+# If you generate WASM output
+rust/**/*.wasm
+
+# Optional: editor/OS junk
+.DS_Store
+*.swp
